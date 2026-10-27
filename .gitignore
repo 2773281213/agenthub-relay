@@ -1,0 +1,12 @@
+# Runtime state of the hub: job records, logs and per-job worktrees
+.agenthub/
+
+# Dependencies and engine-written mod types
+node_modules/
+.claude-plugin/types/
+
+# Editor and OS files
+.DS_Store
+*.swp
+*~
+*.log
