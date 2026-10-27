@@ -1,0 +1,668 @@
+{
+  "schema": "birdview.constraint-catalog/v1",
+  "project": {
+    "name": "agenthub-relay",
+    "revision": "47e247b1be78d60a0e2c00a1d2c106a373b295be"
+  },
+  "coverage": {
+    "checkedAt": "2026-10-27T13:27:20.112Z",
+    "snapshot": "committed-HEAD",
+    "shallow": false,
+    "entries": [
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "checkedPaths": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "docs/design.md"
+    ],
+    "excluded": [],
+    "unresolved": [
+      {
+        "from": "docs/design.md",
+        "target": "skills/agenthub-relay/SKILL.md",
+        "reason": "outside-or-missing"
+      }
+    ],
+    "uninspectedPaths": [],
+    "semanticReview": "pending",
+    "limitations": [
+      "Only tracked entry files and their local Markdown references are collected.",
+      "Uncommitted files, external references, implicit contracts and host/user instructions need separate inspection.",
+      "Sections are source material, not automatically effective or verified rules.",
+      "History counts use current file paths; rename ancestry is not followed."
+    ]
+  },
+  "references": [
+    {
+      "from": "AGENTS.md",
+      "to": "docs/design.md",
+      "target": "docs/design.md"
+    }
+  ],
+  "sources": [
+    {
+      "id": "source-a54ff182c7e8acf5",
+      "path": "AGENTS.md",
+      "kind": "instruction",
+      "scope": ".",
+      "discoveredFrom": null,
+      "applicability": "unreviewed",
+      "text": "# agenthub-relay agent instructions\n\nThese rules apply to every agent working in this repository, whichever agent is planning and whichever is executing (Claude Code, Codex, DeepSeek Harness, Antigravity or another MCP client). The design they protect is described in [docs/design.md](docs/design.md).\n\n## Architecture rules\n\n- Keep the hub planner-neutral: code under `src/` must not assume which agent is the planner; Claude Code specific behavior lives only in `hooks/`, `types/` and `.claude-plugin/`.\n- Use no runtime dependencies: the hub ships as plain ESM JavaScript for Node.js 20 or newer, and code under `src/` imports only the Node.js standard library.\n- Treat Antigravity (`agy`) and the generic ACP executor as reserved in v0.1: dispatching to a reserved executor must fail closed with an error that names the reason.\n\n## Execution safety rules\n\n- Run every executor inside its own git worktree under `.agenthub/worktrees/`; the main working tree may change only through `relay_apply`.\n- Refuse a `light` tier job unless it declares an explicit file scope and at least one check command.\n- Refuse a write job whose scope overlaps the scope of an active write job, using directory-prefix matching (`src/api` covers `src/api/x.ts` but not `src/api-other.ts`).\n- Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`; in that role the hub must refuse `relay_dispatch` and the Claude Code mod must stay inactive.\n- Pass secrets only by environment variable name; never write API keys or environment values into job records, logs, events or test fixtures.\n\n## Verification rules\n\n- Record checks with Birdview semantics: `passed` requires exit code 0, `failed` requires a non-zero exit code and `not-run` requires a null exit code; a job with any failed check ends as `failed`, and a job without checks is reported as unverified.\n- Ship every behavior change with a `node --test` test that exercises observable behavior through public interfaces; changes to `hooks/` also need `claude plugin test` coverage.\n\n## Cache keep-alive rules\n\n- Keep the Claude Code planner's prompt cache warm only through `$.model.fork`, only while relay jobs are running, never once the cache is presumed cold, and never beyond the configured ceiling; keep-alive must not add turns to the transcript.",
+      "sections": [
+        {
+          "id": "source-a54ff182c7e8acf5-s1",
+          "title": "agenthub-relay agent instructions",
+          "level": 1,
+          "line": 1,
+          "endLine": 4,
+          "text": "# agenthub-relay agent instructions\n\nThese rules apply to every agent working in this repository, whichever agent is planning and whichever is executing (Claude Code, Codex, DeepSeek Harness, Antigravity or another MCP client). The design they protect is described in [docs/design.md](docs/design.md).\n"
+        },
+        {
+          "id": "source-a54ff182c7e8acf5-s2",
+          "title": "Architecture rules",
+          "level": 2,
+          "line": 5,
+          "endLine": 10,
+          "text": "## Architecture rules\n\n- Keep the hub planner-neutral: code under `src/` must not assume which agent is the planner; Claude Code specific behavior lives only in `hooks/`, `types/` and `.claude-plugin/`.\n- Use no runtime dependencies: the hub ships as plain ESM JavaScript for Node.js 20 or newer, and code under `src/` imports only the Node.js standard library.\n- Treat Antigravity (`agy`) and the generic ACP executor as reserved in v0.1: dispatching to a reserved executor must fail closed with an error that names the reason.\n"
+        },
+        {
+          "id": "source-a54ff182c7e8acf5-s3",
+          "title": "Execution safety rules",
+          "level": 2,
+          "line": 11,
+          "endLine": 18,
+          "text": "## Execution safety rules\n\n- Run every executor inside its own git worktree under `.agenthub/worktrees/`; the main working tree may change only through `relay_apply`.\n- Refuse a `light` tier job unless it declares an explicit file scope and at least one check command.\n- Refuse a write job whose scope overlaps the scope of an active write job, using directory-prefix matching (`src/api` covers `src/api/x.ts` but not `src/api-other.ts`).\n- Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`; in that role the hub must refuse `relay_dispatch` and the Claude Code mod must stay inactive.\n- Pass secrets only by environment variable name; never write API keys or environment values into job records, logs, events or test fixtures.\n"
+        },
+        {
+          "id": "source-a54ff182c7e8acf5-s4",
+          "title": "Verification rules",
+          "level": 2,
+          "line": 19,
+          "endLine": 23,
+          "text": "## Verification rules\n\n- Record checks with Birdview semantics: `passed` requires exit code 0, `failed` requires a non-zero exit code and `not-run` requires a null exit code; a job with any failed check ends as `failed`, and a job without checks is reported as unverified.\n- Ship every behavior change with a `node --test` test that exercises observable behavior through public interfaces; changes to `hooks/` also need `claude plugin test` coverage.\n"
+        },
+        {
+          "id": "source-a54ff182c7e8acf5-s5",
+          "title": "Cache keep-alive rules",
+          "level": 2,
+          "line": 24,
+          "endLine": 26,
+          "text": "## Cache keep-alive rules\n\n- Keep the Claude Code planner's prompt cache warm only through `$.model.fork`, only while relay jobs are running, never once the cache is presumed cold, and never beyond the configured ceiling; keep-alive must not add turns to the transcript."
+        }
+      ],
+      "history": {
+        "complete": true,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be"
+      }
+    },
+    {
+      "id": "source-6ebdb617a8104a77",
+      "path": "CLAUDE.md",
+      "kind": "instruction",
+      "scope": ".",
+      "discoveredFrom": null,
+      "applicability": "unreviewed",
+      "text": "@AGENTS.md\n\n## Claude Code notes\n\n- The mod in `hooks/register.ts` targets Claude Code 2.1.287 or later and is type-checked against the 2.1.311 mod types. Validate it with `claude plugin validate .` and test it with `claude plugin test .`.\n- When Claude Code is the planner, end the turn after dispatching jobs; the mod keeps the cache warm while jobs run and wakes the session when a job finishes.",
+      "sections": [
+        {
+          "id": "source-6ebdb617a8104a77-s1",
+          "title": "Claude Code notes",
+          "level": 2,
+          "line": 3,
+          "endLine": 6,
+          "text": "## Claude Code notes\n\n- The mod in `hooks/register.ts` targets Claude Code 2.1.287 or later and is type-checked against the 2.1.311 mod types. Validate it with `claude plugin validate .` and test it with `claude plugin test .`.\n- When Claude Code is the planner, end the turn after dispatching jobs; the mod keeps the cache warm while jobs run and wakes the session when a job finishes."
+        }
+      ],
+      "history": {
+        "complete": true,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be"
+      }
+    },
+    {
+      "id": "source-b0929dacd4f1fc19",
+      "path": "docs/design.md",
+      "kind": "reference",
+      "scope": null,
+      "discoveredFrom": "AGENTS.md",
+      "applicability": "unreviewed",
+      "text": "# agenthub-relay 设计（v0.1，拟实现）\n\n状态：设计稿，模块均未实现。本文是 `.birdview/architecture.json` 引用的证据来源，实现后由源码证据取代。\n\n## 1. 背景与目标\n\n来源是 linux.do 话题《CC 消耗 Token 太快了，除了开 Pro 有别的办法么？》可见第 16 楼（post #19）的思路：用 paseo、bb、lody、t3、Synara 这类已实现各家 agent 互调的工具，让 Claude Code 当主调度，复杂任务交给 Codex，简单明确的任务交给 DeepSeek V4 Flash，再写一个 mod，让 Claude Code 在等待其他 agent 时每 55 分钟保活缓存。\n\nagenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具接任何规划者，对下用各家官方的无人值守模式驱动执行者。目标是让规划者只花少量 token 做拆分、派发和验收，把实现性的 token 消耗转给更便宜或已付费的执行者。\n\n## 2. 思路核对结论\n\n1. 互调可行：所列工具都提供让一个 agent 启动另一个 agent 的接口（CLI、MCP 或 ACP），但没有一个原生覆盖本项目要接的全部四家，因此 v0.1 自建 hub。\n2. DeepSeek 的官方模型名现为 `deepseek-flash`，旧名 `deepseek-v4-flash` 仍被接受并路由到同一模型。\n3. 55 分钟保活只在 Claude Code 主会话缓存 TTL 为 1 小时时有效。订阅额度内默认 1 小时；API key、超额计费和云厂商默认 5 分钟，需要设置 `CLAUDE_CODE_PROMPT_CACHE_TTL=1h` 或 `promptCacheTtl`。\n4. \"mods\" 是 Claude Code 2.1.287 起默认开启的功能。保活用 `$.model.fork`：它按主会话上一次请求原样发送并读取缓存前缀，不向对话追加轮次。\n\n## 3. 角色模型\n\n规划者和执行者不固定。任何能加载 MCP 服务的 agent 都可以当规划者：Claude Code、Codex、DeepSeek Harness、Antigravity。执行者由档位映射决定，v0.1 实现 Claude Code、Codex、DeepSeek Harness 三家，Antigravity 只在配置里预留。\n\n档位（tier）描述任务性质，不描述代理：\n\n| 档位 | 含义 | 默认执行者（16 楼档位） | 护栏 |\n|---|---|---|---|\n| deep | 复杂、多文件、需要推理的实现或排错 | codex | 必须声明范围 |\n| light | 简单且明确的机械性任务 | dsh（DeepSeek Harness，`deepseek-flash`） | 必须声明文件范围和至少一条检查命令 |\n| review | 只读审查或调研 | claude | 只读，任何改动都记为越界 |\n\n档位到执行者的映射按配置里的 profile 切换，例如以 Codex 为规划者时可把 deep 映射到 claude。\n\n## 4. 模块\n\n| id | 职责 | 计划路径 |\n|---|---|---|\n| planner-surface | MCP 工具面与 CLI，是所有规划者的唯一入口，不假设规划者身份 | `src/mcp.mjs` `src/tools.mjs` `src/cli.mjs` |\n| dispatch-policy | 档位映射、light 档护栏、并发写范围冲突锁、预留代理失败关闭、执行者禁止再派发 | `src/policy.mjs` `src/config.mjs` |\n| job-store | 任务记录与状态机、事件日志、原子写、心跳存活检测 | `src/store.mjs` |\n| git-isolation | 每个任务一个 git worktree、基线提交、变更清单、越界审计、补丁应用与丢弃 | `src/git.mjs` |\n| executor-adapters | 三家执行者的命令构造与输出解析，agy 与 ACP 预留 | `src/executors.mjs` |\n| worker-runner | 分离进程中的 worker：超时与取消、运行检查、收尾 | `src/worker.mjs` `src/checks.mjs` |\n| claude-planner-mod | Claude Code 规划者专用 mod：保活、任务结束唤醒、`/relay` 命令、状态行 | `hooks/` `types/` `.claude-plugin/` `.mcp.json` |\n| relay-skill | 可移植的路由手册（Agent Skills 标准），教规划者拆分、选档、写任务、等待和验收 | `skills/agenthub-relay/SKILL.md` |\n\n外部模块：planner-hosts（任一 MCP 客户端规划者）、executor-clis（codex、claude、dsh；agy 预留）、anthropic-cache（Claude 主会话提示缓存）。\n\n## 5. 关系\n\n- 规划者调用 planner-surface 的 `relay_*` 工具。\n- planner-surface 先让 dispatch-policy 校验档位、范围与冲突；dispatch-policy 读取 job-store 中活跃任务的范围声明。\n- planner-surface 在 job-store 建记录，经 git-isolation 建 worktree，再以分离进程启动 worker-runner。\n- worker-runner 通过 executor-adapters 调用 executor-clis，从 git-isolation 取变更清单做越界审计，把状态迁移、心跳和结果写回 job-store。\n- claude-planner-mod 通过 `$.mcp.call` 查询任务状态，用 `$.model.fork` 刷新主会话缓存，任务结束时用 `$.prompt.submit` 唤醒 Claude Code。\n\n## 6. 任务生命周期\n\n状态：`queued` → `running` → `verifying` → `completed` | `failed` | `cancelled`；集成状态另记 `none` | `applied` | `discarded`。\n\n1. 派发：校验护栏后取基线提交（主工作区有未提交改动时用 `git stash create` 的快照提交），在 `.agenthub/worktrees/<job>` 建分支 `agenthub/<job>`。\n2. 运行：worker 以 `AGENTHUB_RELAY_ROLE=executor` 启动执行者，每 30 秒写心跳；超时或取消时按进程组终止。\n3. 检查：在 worktree 里逐条运行检查命令，退出码 0 为 passed，非 0 为 failed，未运行为 not-run；任何一条失败则任务为 failed，没有检查则报告为未验证。\n4. 审计：对比基线列出改动文件，范围外的文件列为越界。\n5. 集成：规划者看过 `relay_result` 后调用 `relay_apply`（先 `git apply --check`）或 `relay_discard`。\n\n## 7. MCP 工具\n\n| 工具 | 作用 |\n|---|---|\n| `relay_agents` | 列出执行者、可用性、当前 profile 的档位映射和预留项 |\n| `relay_dispatch` | 按档位或指定执行者派发任务，返回任务 id、worktree 与基线提交 |\n| `relay_status` | 查询一个或全部任务的状态 |\n| `relay_wait` | 最多等待 50 秒，任一任务结束即返回，供没有 mod 的规划者使用 |\n| `relay_result` | 摘要、改动文件、越界文件、检查结果和日志路径 |\n| `relay_apply` | 把任务补丁应用到主工作区 |\n| `relay_discard` | 删除任务 worktree 与分支 |\n| `relay_cancel` | 终止运行中的任务 |\n\n## 8. 执行者适配\n\n| 执行者 | 调用方式 | 输出 |\n|---|---|---|\n| codex | `codex exec --json --sandbox workspace-write -o <最终消息文件> -`，任务从 stdin 传入 | JSONL 事件，最终消息写入文件 |\n| claude | `claude -p --output-format json --permission-mode acceptEdits --permission-prompts none`，检查命令加入 `--allowedTools` | JSON 中的 `result` 与用量 |\n| dsh | `dsh --profile headless \"<任务>\"` | stdout 为最后一条回答，完成退出码 0，否则 1 |\n| agy | 预留，派发时报错 | — |\n\n执行者只继承 PATH、HOME、语言设置和配置里列出的变量名；密钥值不进入任何记录。\n\n## 9. Claude Code 保活 mod\n\n- 计时起点是主会话最后一次模型请求的开始时间，因为缓存寿命从读写缓存的请求开始算。\n- 条件：保活开启、有任务在运行、主会话空闲、距上次请求或上次 fork 达到间隔（默认 55 分钟），且距今仍在 60 分钟内（缓存仍热）；超过上限（默认距最后一次真实请求 8 小时）停止。\n- 动作：`$.model.fork` 发一个只要求回复 OK 的问题；记录 `cache_read_input_tokens`。读到 0 且写入很大说明缓存已过期（多半是 5 分钟 TTL），此时暂停保活并提示设置 1 小时 TTL。\n- 唤醒：任务进入终态时用 `$.prompt.submit` 发一条提示，引导规划者调用 `relay_result`。\n- 空闲压缩：Claude Code 在 1 小时 TTL 下可能于缓存到期前自动压缩空闲会话；mod 记录这类压缩事件，便于判断 fork 是否重置了该计时。\n\n经济性：1 小时缓存写入是基础输入价的 2 倍，读取是 0.1 倍（Opus 5.5 与 Sonnet 5.5 为 0.05 倍），所以在约 18 到 36 小时的等待内保活都比重新写入便宜；默认上限 8 小时。\n\n## 10. 安全与隔离\n\n- 执行者只在自己的 worktree 写；主工作区只经 `relay_apply` 改变。\n- 并发写任务的范围按目录前缀判断，重叠即拒绝。\n- 执行者环境带 `AGENTHUB_RELAY_ROLE=executor`，此时 hub 拒绝再派发，mod 自停，防止递归。\n- 范围声明和越界审计是事后核对，不是文件系统写锁。\n\n## 11. 路线图\n\n- v0.2：通用 ACP 执行器（Claude 经 `claude-agent-acp`、Codex 经 `codex-acp`、dsh 原生 `--profile acp`、agy 官方 ACP server），之后可把 Paseo、bb、Lody 作为可选后端。\n- Antigravity headless 适配器（`agy -p --output-format json`）。\n\n## 来源\n\n- [linux.do 话题 3028918](https://linux.do/t/topic/3028918)\n- [Claude Code：How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching.md)\n- [Claude Code：Mods overview](https://code.claude.com/docs/en/plugins/mods/overview.md)\n- [Claude API：Prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)\n- [Claude Code：Run Claude Code programmatically](https://code.claude.com/docs/en/headless.md)\n- [Codex：Non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)\n- [DeepSeek：V4 Flash 更新](https://api-docs.deepseek.com/news/v4-flash)\n- [DeepSeek Harness headless README](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/bundle/headless/README.md)\n- [Antigravity CLI：Headless mode](https://antigravity.google/docs/cli/headless/)\n- [Agent Client Protocol：Agents](https://agentclientprotocol.com/get-started/agents)",
+      "sections": [
+        {
+          "id": "source-b0929dacd4f1fc19-s1",
+          "title": "agenthub-relay 设计（v0.1，拟实现）",
+          "level": 1,
+          "line": 1,
+          "endLine": 4,
+          "text": "# agenthub-relay 设计（v0.1，拟实现）\n\n状态：设计稿，模块均未实现。本文是 `.birdview/architecture.json` 引用的证据来源，实现后由源码证据取代。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s2",
+          "title": "1. 背景与目标",
+          "level": 2,
+          "line": 5,
+          "endLine": 10,
+          "text": "## 1. 背景与目标\n\n来源是 linux.do 话题《CC 消耗 Token 太快了，除了开 Pro 有别的办法么？》可见第 16 楼（post #19）的思路：用 paseo、bb、lody、t3、Synara 这类已实现各家 agent 互调的工具，让 Claude Code 当主调度，复杂任务交给 Codex，简单明确的任务交给 DeepSeek V4 Flash，再写一个 mod，让 Claude Code 在等待其他 agent 时每 55 分钟保活缓存。\n\nagenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具接任何规划者，对下用各家官方的无人值守模式驱动执行者。目标是让规划者只花少量 token 做拆分、派发和验收，把实现性的 token 消耗转给更便宜或已付费的执行者。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s3",
+          "title": "2. 思路核对结论",
+          "level": 2,
+          "line": 11,
+          "endLine": 17,
+          "text": "## 2. 思路核对结论\n\n1. 互调可行：所列工具都提供让一个 agent 启动另一个 agent 的接口（CLI、MCP 或 ACP），但没有一个原生覆盖本项目要接的全部四家，因此 v0.1 自建 hub。\n2. DeepSeek 的官方模型名现为 `deepseek-flash`，旧名 `deepseek-v4-flash` 仍被接受并路由到同一模型。\n3. 55 分钟保活只在 Claude Code 主会话缓存 TTL 为 1 小时时有效。订阅额度内默认 1 小时；API key、超额计费和云厂商默认 5 分钟，需要设置 `CLAUDE_CODE_PROMPT_CACHE_TTL=1h` 或 `promptCacheTtl`。\n4. \"mods\" 是 Claude Code 2.1.287 起默认开启的功能。保活用 `$.model.fork`：它按主会话上一次请求原样发送并读取缓存前缀，不向对话追加轮次。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s4",
+          "title": "3. 角色模型",
+          "level": 2,
+          "line": 18,
+          "endLine": 31,
+          "text": "## 3. 角色模型\n\n规划者和执行者不固定。任何能加载 MCP 服务的 agent 都可以当规划者：Claude Code、Codex、DeepSeek Harness、Antigravity。执行者由档位映射决定，v0.1 实现 Claude Code、Codex、DeepSeek Harness 三家，Antigravity 只在配置里预留。\n\n档位（tier）描述任务性质，不描述代理：\n\n| 档位 | 含义 | 默认执行者（16 楼档位） | 护栏 |\n|---|---|---|---|\n| deep | 复杂、多文件、需要推理的实现或排错 | codex | 必须声明范围 |\n| light | 简单且明确的机械性任务 | dsh（DeepSeek Harness，`deepseek-flash`） | 必须声明文件范围和至少一条检查命令 |\n| review | 只读审查或调研 | claude | 只读，任何改动都记为越界 |\n\n档位到执行者的映射按配置里的 profile 切换，例如以 Codex 为规划者时可把 deep 映射到 claude。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s5",
+          "title": "4. 模块",
+          "level": 2,
+          "line": 32,
+          "endLine": 46,
+          "text": "## 4. 模块\n\n| id | 职责 | 计划路径 |\n|---|---|---|\n| planner-surface | MCP 工具面与 CLI，是所有规划者的唯一入口，不假设规划者身份 | `src/mcp.mjs` `src/tools.mjs` `src/cli.mjs` |\n| dispatch-policy | 档位映射、light 档护栏、并发写范围冲突锁、预留代理失败关闭、执行者禁止再派发 | `src/policy.mjs` `src/config.mjs` |\n| job-store | 任务记录与状态机、事件日志、原子写、心跳存活检测 | `src/store.mjs` |\n| git-isolation | 每个任务一个 git worktree、基线提交、变更清单、越界审计、补丁应用与丢弃 | `src/git.mjs` |\n| executor-adapters | 三家执行者的命令构造与输出解析，agy 与 ACP 预留 | `src/executors.mjs` |\n| worker-runner | 分离进程中的 worker：超时与取消、运行检查、收尾 | `src/worker.mjs` `src/checks.mjs` |\n| claude-planner-mod | Claude Code 规划者专用 mod：保活、任务结束唤醒、`/relay` 命令、状态行 | `hooks/` `types/` `.claude-plugin/` `.mcp.json` |\n| relay-skill | 可移植的路由手册（Agent Skills 标准），教规划者拆分、选档、写任务、等待和验收 | `skills/agenthub-relay/SKILL.md` |\n\n外部模块：planner-hosts（任一 MCP 客户端规划者）、executor-clis（codex、claude、dsh；agy 预留）、anthropic-cache（Claude 主会话提示缓存）。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s6",
+          "title": "5. 关系",
+          "level": 2,
+          "line": 47,
+          "endLine": 54,
+          "text": "## 5. 关系\n\n- 规划者调用 planner-surface 的 `relay_*` 工具。\n- planner-surface 先让 dispatch-policy 校验档位、范围与冲突；dispatch-policy 读取 job-store 中活跃任务的范围声明。\n- planner-surface 在 job-store 建记录，经 git-isolation 建 worktree，再以分离进程启动 worker-runner。\n- worker-runner 通过 executor-adapters 调用 executor-clis，从 git-isolation 取变更清单做越界审计，把状态迁移、心跳和结果写回 job-store。\n- claude-planner-mod 通过 `$.mcp.call` 查询任务状态，用 `$.model.fork` 刷新主会话缓存，任务结束时用 `$.prompt.submit` 唤醒 Claude Code。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s7",
+          "title": "6. 任务生命周期",
+          "level": 2,
+          "line": 55,
+          "endLine": 64,
+          "text": "## 6. 任务生命周期\n\n状态：`queued` → `running` → `verifying` → `completed` | `failed` | `cancelled`；集成状态另记 `none` | `applied` | `discarded`。\n\n1. 派发：校验护栏后取基线提交（主工作区有未提交改动时用 `git stash create` 的快照提交），在 `.agenthub/worktrees/<job>` 建分支 `agenthub/<job>`。\n2. 运行：worker 以 `AGENTHUB_RELAY_ROLE=executor` 启动执行者，每 30 秒写心跳；超时或取消时按进程组终止。\n3. 检查：在 worktree 里逐条运行检查命令，退出码 0 为 passed，非 0 为 failed，未运行为 not-run；任何一条失败则任务为 failed，没有检查则报告为未验证。\n4. 审计：对比基线列出改动文件，范围外的文件列为越界。\n5. 集成：规划者看过 `relay_result` 后调用 `relay_apply`（先 `git apply --check`）或 `relay_discard`。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s8",
+          "title": "7. MCP 工具",
+          "level": 2,
+          "line": 65,
+          "endLine": 77,
+          "text": "## 7. MCP 工具\n\n| 工具 | 作用 |\n|---|---|\n| `relay_agents` | 列出执行者、可用性、当前 profile 的档位映射和预留项 |\n| `relay_dispatch` | 按档位或指定执行者派发任务，返回任务 id、worktree 与基线提交 |\n| `relay_status` | 查询一个或全部任务的状态 |\n| `relay_wait` | 最多等待 50 秒，任一任务结束即返回，供没有 mod 的规划者使用 |\n| `relay_result` | 摘要、改动文件、越界文件、检查结果和日志路径 |\n| `relay_apply` | 把任务补丁应用到主工作区 |\n| `relay_discard` | 删除任务 worktree 与分支 |\n| `relay_cancel` | 终止运行中的任务 |\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s9",
+          "title": "8. 执行者适配",
+          "level": 2,
+          "line": 78,
+          "endLine": 88,
+          "text": "## 8. 执行者适配\n\n| 执行者 | 调用方式 | 输出 |\n|---|---|---|\n| codex | `codex exec --json --sandbox workspace-write -o <最终消息文件> -`，任务从 stdin 传入 | JSONL 事件，最终消息写入文件 |\n| claude | `claude -p --output-format json --permission-mode acceptEdits --permission-prompts none`，检查命令加入 `--allowedTools` | JSON 中的 `result` 与用量 |\n| dsh | `dsh --profile headless \"<任务>\"` | stdout 为最后一条回答，完成退出码 0，否则 1 |\n| agy | 预留，派发时报错 | — |\n\n执行者只继承 PATH、HOME、语言设置和配置里列出的变量名；密钥值不进入任何记录。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s10",
+          "title": "9. Claude Code 保活 mod",
+          "level": 2,
+          "line": 89,
+          "endLine": 98,
+          "text": "## 9. Claude Code 保活 mod\n\n- 计时起点是主会话最后一次模型请求的开始时间，因为缓存寿命从读写缓存的请求开始算。\n- 条件：保活开启、有任务在运行、主会话空闲、距上次请求或上次 fork 达到间隔（默认 55 分钟），且距今仍在 60 分钟内（缓存仍热）；超过上限（默认距最后一次真实请求 8 小时）停止。\n- 动作：`$.model.fork` 发一个只要求回复 OK 的问题；记录 `cache_read_input_tokens`。读到 0 且写入很大说明缓存已过期（多半是 5 分钟 TTL），此时暂停保活并提示设置 1 小时 TTL。\n- 唤醒：任务进入终态时用 `$.prompt.submit` 发一条提示，引导规划者调用 `relay_result`。\n- 空闲压缩：Claude Code 在 1 小时 TTL 下可能于缓存到期前自动压缩空闲会话；mod 记录这类压缩事件，便于判断 fork 是否重置了该计时。\n\n经济性：1 小时缓存写入是基础输入价的 2 倍，读取是 0.1 倍（Opus 5.5 与 Sonnet 5.5 为 0.05 倍），所以在约 18 到 36 小时的等待内保活都比重新写入便宜；默认上限 8 小时。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s11",
+          "title": "10. 安全与隔离",
+          "level": 2,
+          "line": 99,
+          "endLine": 105,
+          "text": "## 10. 安全与隔离\n\n- 执行者只在自己的 worktree 写；主工作区只经 `relay_apply` 改变。\n- 并发写任务的范围按目录前缀判断，重叠即拒绝。\n- 执行者环境带 `AGENTHUB_RELAY_ROLE=executor`，此时 hub 拒绝再派发，mod 自停，防止递归。\n- 范围声明和越界审计是事后核对，不是文件系统写锁。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s12",
+          "title": "11. 路线图",
+          "level": 2,
+          "line": 106,
+          "endLine": 110,
+          "text": "## 11. 路线图\n\n- v0.2：通用 ACP 执行器（Claude 经 `claude-agent-acp`、Codex 经 `codex-acp`、dsh 原生 `--profile acp`、agy 官方 ACP server），之后可把 Paseo、bb、Lody 作为可选后端。\n- Antigravity headless 适配器（`agy -p --output-format json`）。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s13",
+          "title": "来源",
+          "level": 2,
+          "line": 111,
+          "endLine": 122,
+          "text": "## 来源\n\n- [linux.do 话题 3028918](https://linux.do/t/topic/3028918)\n- [Claude Code：How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching.md)\n- [Claude Code：Mods overview](https://code.claude.com/docs/en/plugins/mods/overview.md)\n- [Claude API：Prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)\n- [Claude Code：Run Claude Code programmatically](https://code.claude.com/docs/en/headless.md)\n- [Codex：Non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)\n- [DeepSeek：V4 Flash 更新](https://api-docs.deepseek.com/news/v4-flash)\n- [DeepSeek Harness headless README](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/bundle/headless/README.md)\n- [Antigravity CLI：Headless mode](https://antigravity.google/docs/cli/headless/)\n- [Agent Client Protocol：Agents](https://agentclientprotocol.com/get-started/agents)"
+        }
+      ],
+      "history": {
+        "complete": true,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be"
+      }
+    }
+  ],
+  "architectureBinding": {
+    "mapId": "agenthub-relay-system",
+    "mapRevision": 3,
+    "sourceRevision": "47e247b1be78d60a0e2c00a1d2c106a373b295be"
+  },
+  "rules": [
+    {
+      "id": "rule-planner-neutral",
+      "name": "核心代码不假设规划者身份",
+      "condition": "在本仓库开发或运行 agenthub-relay 时",
+      "explanation": "适用于全部 src 代码；Claude 专属逻辑只能放在 hooks/、types/、.claude-plugin/。",
+      "verification": "审查 src/ 中是否出现规划者特判，并用非 Claude 客户端名跑 MCP 流程测试。",
+      "applicability": "applicable",
+      "targetRole": "backend",
+      "roleReason": "规则作用于该角色职责。",
+      "sourcePath": "AGENTS.md",
+      "line": 7,
+      "endLine": 7,
+      "category": "interfaces",
+      "topic": {
+        "id": "boundaries",
+        "name": "模块边界"
+      },
+      "history": {
+        "status": "tracked",
+        "method": "git-line-history",
+        "snapshot": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+        "sourcePath": "AGENTS.md",
+        "line": 7,
+        "endLine": 7,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commits": [
+          {
+            "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+            "date": "2026-10-27T21:10:39+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-reserved-fail-closed",
+      "name": "预留执行者失败关闭",
+      "condition": "在本仓库开发或运行 agenthub-relay 时",
+      "explanation": "agy 与通用 ACP 在 v0.1 只预留，派发必须报出原因。",
+      "verification": "测试向 agy 派发时返回带原因的错误且不建 worktree。",
+      "applicability": "applicable",
+      "targetRole": "backend",
+      "roleReason": "规则约束的对象属于该角色的模块：dispatch-policy、executor-adapters",
+      "modules": [
+        "dispatch-policy",
+        "executor-adapters"
+      ],
+      "sourcePath": "AGENTS.md",
+      "line": 9,
+      "endLine": 9,
+      "category": "interfaces",
+      "topic": {
+        "id": "boundaries",
+        "name": "模块边界"
+      },
+      "history": {
+        "status": "tracked",
+        "method": "git-line-history",
+        "snapshot": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+        "sourcePath": "AGENTS.md",
+        "line": 9,
+        "endLine": 9,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commits": [
+          {
+            "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+            "date": "2026-10-27T21:10:39+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-no-runtime-deps",
+      "name": "零运行时依赖",
+      "condition": "在本仓库开发或运行 agenthub-relay 时",
+      "explanation": "适用于 hub 运行时的全部模块。",
+      "verification": "检查 package.json 无 dependencies，并扫描 src/ 的 import 只来自 node:。",
+      "applicability": "applicable",
+      "targetRole": "backend",
+      "roleReason": "规则约束的对象属于该角色的模块：planner-surface、dispatch-policy、job-store、git-isolation、executor-adapters、worker-runner",
+      "modules": [
+        "planner-surface",
+        "dispatch-policy",
+        "job-store",
+        "git-isolation",
+        "executor-adapters",
+        "worker-runner"
+      ],
+      "sourcePath": "AGENTS.md",
+      "line": 8,
+      "endLine": 8,
+      "category": "delivery",
+      "topic": {
+        "id": "packaging",
+        "name": "交付形态"
+      },
+      "history": {
+        "status": "tracked",
+        "method": "git-line-history",
+        "snapshot": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+        "sourcePath": "AGENTS.md",
+        "line": 8,
+        "endLine": 8,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commits": [
+          {
+            "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+            "date": "2026-10-27T21:10:39+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-worktree-only",
+      "name": "执行者只在自己的 worktree 写",
+      "condition": "在本仓库开发或运行 agenthub-relay 时",
+      "explanation": "主工作区只经 relay_apply 改变。",
+      "verification": "集成测试确认任务结束后主工作区未变，apply 后才出现改动。",
+      "applicability": "applicable",
+      "targetRole": "security",
+      "roleReason": "规则约束的对象属于该角色的模块：git-isolation、worker-runner",
+      "modules": [
+        "git-isolation",
+        "worker-runner"
+      ],
+      "sourcePath": "AGENTS.md",
+      "line": 13,
+      "endLine": 13,
+      "category": "security",
+      "topic": {
+        "id": "isolation",
+        "name": "隔离与权限"
+      },
+      "history": {
+        "status": "tracked",
+        "method": "git-line-history",
+        "snapshot": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+        "sourcePath": "AGENTS.md",
+        "line": 13,
+        "endLine": 13,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commits": [
+          {
+            "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+            "date": "2026-10-27T21:10:39+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-scope-overlap",
+      "name": "并发写范围不得重叠",
+      "condition": "在本仓库开发或运行 agenthub-relay 时",
+      "explanation": "按目录前缀匹配，避免两个执行者同时改同一处。",
+      "verification": "单元测试前缀判定，集成测试重叠派发被拒。",
+      "applicability": "applicable",
+      "targetRole": "security",
+      "roleReason": "规则约束的对象属于该角色的模块：dispatch-policy、job-store",
+      "modules": [
+        "dispatch-policy",
+        "job-store"
+      ],
+      "sourcePath": "AGENTS.md",
+      "line": 15,
+      "endLine": 15,
+      "category": "security",
+      "topic": {
+        "id": "isolation",
+        "name": "隔离与权限"
+      },
+      "history": {
+        "status": "tracked",
+        "method": "git-line-history",
+        "snapshot": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+        "sourcePath": "AGENTS.md",
+        "line": 15,
+        "endLine": 15,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commits": [
+          {
+            "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+            "date": "2026-10-27T21:10:39+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-executor-role",
+      "name": "执行者禁止再派发",
+      "condition": "在本仓库开发或运行 agenthub-relay 时",
+      "explanation": "防止执行者递归派发，也让 mod 在执行者进程中保持静默。",
+      "verification": "测试带该环境变量时 relay_dispatch 被拒、mod 不注册定时器。",
+      "applicability": "applicable",
+      "targetRole": "security",
+      "roleReason": "规则约束的对象属于该角色的模块：dispatch-policy、worker-runner、claude-planner-mod",
+      "modules": [
+        "dispatch-policy",
+        "worker-runner",
+        "claude-planner-mod"
+      ],
+      "sourcePath": "AGENTS.md",
+      "line": 16,
+      "endLine": 16,
+      "category": "security",
+      "topic": {
+        "id": "isolation",
+        "name": "隔离与权限"
+      },
+      "history": {
+        "status": "tracked",
+        "method": "git-line-history",
+        "snapshot": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+        "sourcePath": "AGENTS.md",
+        "line": 16,
+        "endLine": 16,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commits": [
+          {
+            "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+            "date": "2026-10-27T21:10:39+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-light-tier-guard",
+      "name": "light 档必须有范围和检查",
+      "condition": "在本仓库开发或运行 agenthub-relay 时",
+      "explanation": "对应 16 楼“简单明确的任务交给 DeepSeek”的“明确”。",
+      "verification": "测试缺范围或缺检查的 light 派发被拒绝。",
+      "applicability": "applicable",
+      "targetRole": "backend",
+      "roleReason": "规则约束的对象属于该角色的模块：dispatch-policy",
+      "modules": [
+        "dispatch-policy"
+      ],
+      "sourcePath": "AGENTS.md",
+      "line": 14,
+      "endLine": 14,
+      "category": "interfaces",
+      "topic": {
+        "id": "dispatch",
+        "name": "派发契约"
+      },
+      "history": {
+        "status": "tracked",
+        "method": "git-line-history",
+        "snapshot": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+        "sourcePath": "AGENTS.md",
+        "line": 14,
+        "endLine": 14,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commits": [
+          {
+            "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+            "date": "2026-10-27T21:10:39+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-secrets",
+      "name": "密钥只按变量名透传",
+      "condition": "在本仓库开发或运行 agenthub-relay 时",
+      "explanation": "适用于全项目的记录、日志、事件与测试夹具。",
+      "verification": "测试任务记录与事件中不含环境变量的值，并人工审查日志写入点。",
+      "applicability": "applicable",
+      "targetRole": "security",
+      "roleReason": "规则作用于该角色职责。",
+      "sourcePath": "AGENTS.md",
+      "line": 17,
+      "endLine": 17,
+      "category": "security",
+      "topic": {
+        "id": "secrets",
+        "name": "密钥"
+      },
+      "history": {
+        "status": "tracked",
+        "method": "git-line-history",
+        "snapshot": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+        "sourcePath": "AGENTS.md",
+        "line": 17,
+        "endLine": 17,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commits": [
+          {
+            "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+            "date": "2026-10-27T21:10:39+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-check-semantics",
+      "name": "检查按 birdview 语义记录",
+      "condition": "在本仓库开发或运行 agenthub-relay 时",
+      "explanation": "通过、失败、未运行与退出码一一对应；有失败即任务失败。",
+      "verification": "测试通过、失败、超时三种检查的记录与任务终态。",
+      "applicability": "applicable",
+      "modules": [
+        "worker-runner"
+      ],
+      "sourcePath": "AGENTS.md",
+      "line": 21,
+      "endLine": 21,
+      "category": "testing",
+      "topic": {
+        "id": "verification",
+        "name": "验证记录"
+      },
+      "history": {
+        "status": "tracked",
+        "method": "git-line-history",
+        "snapshot": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+        "sourcePath": "AGENTS.md",
+        "line": 21,
+        "endLine": 21,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commits": [
+          {
+            "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+            "date": "2026-10-27T21:10:39+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-tests",
+      "name": "行为改动必须附测试",
+      "condition": "在本仓库开发或运行 agenthub-relay 时",
+      "explanation": "适用于全项目；hooks/ 还需 claude plugin test。",
+      "verification": "CI 与本地运行 node --test 和 claude plugin test。",
+      "applicability": "applicable",
+      "sourcePath": "AGENTS.md",
+      "line": 22,
+      "endLine": 22,
+      "category": "testing",
+      "topic": {
+        "id": "verification",
+        "name": "验证记录"
+      },
+      "history": {
+        "status": "tracked",
+        "method": "git-line-history",
+        "snapshot": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+        "sourcePath": "AGENTS.md",
+        "line": 22,
+        "endLine": 22,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commits": [
+          {
+            "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+            "date": "2026-10-27T21:10:39+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule-keepalive",
+      "name": "保活只用 fork 且有边界",
+      "condition": "在本仓库开发或运行 agenthub-relay 时",
+      "explanation": "只在有任务运行、缓存仍热、未超上限时保活，且不增加对话轮次。",
+      "verification": "用模拟时钟测试无任务不 fork、冷缓存不 fork、超上限停止。",
+      "applicability": "applicable",
+      "targetRole": "cache",
+      "roleReason": "规则约束的对象属于该角色的模块：claude-planner-mod",
+      "modules": [
+        "claude-planner-mod"
+      ],
+      "sourcePath": "AGENTS.md",
+      "line": 26,
+      "endLine": 26,
+      "category": "lifecycle",
+      "topic": {
+        "id": "keepalive",
+        "name": "缓存保活"
+      },
+      "history": {
+        "status": "tracked",
+        "method": "git-line-history",
+        "snapshot": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+        "sourcePath": "AGENTS.md",
+        "line": 26,
+        "endLine": 26,
+        "version": 1,
+        "lastEdited": "2026-10-27T21:10:39+08:00",
+        "commits": [
+          {
+            "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+            "date": "2026-10-27T21:10:39+08:00"
+          }
+        ]
+      }
+    }
+  ],
+  "ruleReview": {
+    "scope": "已审阅 AGENTS.md 全部 11 条规则与 CLAUDE.md；docs/design.md 是设计说明，不单独提炼规则；它引用的 skills/agenthub-relay/SKILL.md 尚未创建。",
+    "sourcePaths": [
+      "AGENTS.md"
+    ],
+    "reviewedAt": "2026-10-27T13:31:21.840Z",
+    "implementationVerification": "unverified"
+  }
+}

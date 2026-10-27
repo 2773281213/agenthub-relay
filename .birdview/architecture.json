@@ -1,0 +1,1648 @@
+{
+  "schemaVersion": 1,
+  "language": "zh",
+  "mapId": "agenthub-relay-system",
+  "revision": 3,
+  "project": {
+    "id": "agenthub-relay",
+    "name": "agenthub-relay",
+    "revision": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+    "translations": {
+      "en": {
+        "name": "agenthub-relay"
+      }
+    }
+  },
+  "groups": [
+    {
+      "id": "planner-side",
+      "role": "external-services",
+      "name": "规划者侧外部",
+      "members": [
+        "planner-hosts",
+        "anthropic-cache"
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 45,
+          "note": "外部模块清单：规划者与主会话缓存。",
+          "translations": {
+            "en": {
+              "note": "External modules: planners and the session cache."
+            }
+          }
+        }
+      ],
+      "translations": {
+        "en": {
+          "name": "Planner side"
+        }
+      }
+    },
+    {
+      "id": "planner-facing",
+      "role": "interaction",
+      "name": "面向规划者",
+      "members": [
+        "planner-surface",
+        "claude-planner-mod",
+        "relay-skill"
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 36,
+          "note": "工具面、mod 与手册都直接面对规划者。",
+          "translations": {
+            "en": {
+              "note": "The surface, mod and playbook face the planner directly."
+            }
+          },
+          "endLine": 43
+        }
+      ],
+      "translations": {
+        "en": {
+          "name": "Planner-facing"
+        }
+      }
+    },
+    {
+      "id": "relay-runtime",
+      "role": "runtime",
+      "name": "派发与执行运行时",
+      "members": [
+        "dispatch-policy",
+        "job-store",
+        "worker-runner",
+        "executor-adapters",
+        "git-isolation"
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 37,
+          "note": "策略、存储、隔离、适配与 worker 组成执行运行时。",
+          "translations": {
+            "en": {
+              "note": "Policy, store, isolation, adapters and worker form the execution runtime."
+            }
+          },
+          "endLine": 41
+        }
+      ],
+      "translations": {
+        "en": {
+          "name": "Dispatch and execution runtime"
+        }
+      }
+    },
+    {
+      "id": "executor-side",
+      "role": "external-services",
+      "name": "执行者侧外部",
+      "members": [
+        "executor-clis"
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 45,
+          "note": "外部模块清单：执行者 CLI。",
+          "translations": {
+            "en": {
+              "note": "External modules: executor CLIs."
+            }
+          }
+        }
+      ],
+      "translations": {
+        "en": {
+          "name": "Executor side"
+        }
+      }
+    }
+  ],
+  "modules": [
+    {
+      "id": "planner-hosts",
+      "role": "generic",
+      "name": "规划者",
+      "kind": "external",
+      "responsibility": "Claude Code、Codex、DeepSeek Harness、Antigravity 中任何一家加载 relay 的 MCP 服务后即可当规划者。",
+      "ownership": [],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 20,
+          "note": "角色模型：任何能加载 MCP 服务的 agent 都可当规划者。",
+          "translations": {
+            "en": {
+              "note": "Role model: any agent that can load an MCP server can plan."
+            }
+          }
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 0,
+        "column": 0
+      },
+      "translations": {
+        "en": {
+          "name": "Planners",
+          "responsibility": "Claude Code, Codex, DeepSeek Harness or Antigravity become the planner by loading the relay MCP server."
+        }
+      },
+      "roleAssessment": {
+        "basis": "out-of-taxonomy",
+        "note": "外部 agent 宿主，不属于前端、后端、缓存、数据库、队列或安全职责。",
+        "translations": {
+          "en": {
+            "note": "External agent hosts; none of the frontend, backend, cache, database, queue or security roles fit."
+          }
+        }
+      }
+    },
+    {
+      "id": "executor-clis",
+      "role": "generic",
+      "name": "执行者 CLI",
+      "kind": "external",
+      "responsibility": "codex、claude、dsh 的官方无人值守模式；agy 预留。",
+      "ownership": [],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 80,
+          "note": "执行者适配表列出三家的调用方式与输出。",
+          "translations": {
+            "en": {
+              "note": "The executor table lists how each of the three is invoked and what it outputs."
+            }
+          },
+          "endLine": 85
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "容器内没有 Codex 与 dsh 的登录凭据，真实运行只能在用户机器上验证。"
+      ],
+      "layout": {
+        "row": 1,
+        "column": 4
+      },
+      "translations": {
+        "en": {
+          "name": "Executor CLIs",
+          "responsibility": "Official unattended modes of codex, claude and dsh; agy is reserved.",
+          "openQuestions": [
+            "No Codex or dsh credentials exist in the build container, so real runs can only be verified on the user's machine."
+          ]
+        }
+      },
+      "roleAssessment": {
+        "basis": "out-of-taxonomy",
+        "note": "外部编码代理进程，不属于固定角色分类。",
+        "translations": {
+          "en": {
+            "note": "External coding-agent processes; the fixed role taxonomy does not fit."
+          }
+        }
+      }
+    },
+    {
+      "id": "anthropic-cache",
+      "role": "cache",
+      "name": "Claude 主会话缓存",
+      "kind": "external",
+      "responsibility": "按前缀匹配缓存主会话请求；1 小时 TTL 只在订阅额度内默认开启。",
+      "ownership": [],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 15,
+          "note": "思路核对：55 分钟保活只在 1 小时 TTL 下有效。",
+          "translations": {
+            "en": {
+              "note": "Review: a 55-minute keep-alive only works with a one-hour TTL."
+            }
+          }
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 1,
+        "column": 0
+      },
+      "translations": {
+        "en": {
+          "name": "Claude session cache",
+          "responsibility": "Caches the main session's request prefix; the one-hour TTL is the default only within subscription usage."
+        }
+      }
+    },
+    {
+      "id": "planner-surface",
+      "role": "backend",
+      "name": "relay 工具面",
+      "kind": "local",
+      "responsibility": "向任一规划者暴露 relay_* MCP 工具与同名 CLI，是派发、查询、等待、验收与集成的唯一入口，不假设规划者身份。",
+      "ownership": [
+        {
+          "kind": "file",
+          "path": "src/mcp.mjs"
+        },
+        {
+          "kind": "file",
+          "path": "src/tools.mjs"
+        },
+        {
+          "kind": "file",
+          "path": "src/cli.mjs"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 36,
+          "note": "模块表：planner-surface 的职责与计划路径。",
+          "translations": {
+            "en": {
+              "note": "Module table: planner-surface responsibility and planned paths."
+            }
+          }
+        },
+        {
+          "path": "docs/design.md",
+          "line": 67,
+          "note": "八个 MCP 工具的清单。",
+          "translations": {
+            "en": {
+              "note": "The list of eight MCP tools."
+            }
+          },
+          "endLine": 76
+        },
+        {
+          "path": "AGENTS.md",
+          "line": 7,
+          "note": "规划者中立规则。",
+          "translations": {
+            "en": {
+              "note": "Planner-neutral rule."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "拟新增，尚未实现；实现后以源码证据替换设计文档证据。"
+      ],
+      "layout": {
+        "row": 0,
+        "column": 1
+      },
+      "translations": {
+        "en": {
+          "name": "Relay tool surface",
+          "responsibility": "Exposes relay_* MCP tools and a matching CLI to any planner as the single entry for dispatch, status, wait, review and integration, without assuming who plans.",
+          "openQuestions": [
+            "Proposed and not implemented yet; design-document evidence will be replaced by source evidence after implementation."
+          ]
+        }
+      }
+    },
+    {
+      "id": "relay-skill",
+      "role": "generic",
+      "name": "路由手册（Skill）",
+      "kind": "local",
+      "responsibility": "Agent Skills 标准的可移植说明书，教规划者拆分任务、选择档位、写任务说明、等待与验收。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "skills/agenthub-relay"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 43,
+          "note": "模块表：relay-skill 的职责与计划路径。",
+          "translations": {
+            "en": {
+              "note": "Module table: relay-skill responsibility and planned path."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "拟新增，尚未实现；实现后以源码证据替换设计文档证据。"
+      ],
+      "layout": {
+        "row": 2,
+        "column": 1
+      },
+      "translations": {
+        "en": {
+          "name": "Playbook (skill)",
+          "responsibility": "A portable Agent Skills playbook that teaches the planner to split work, choose a tier, write task specs, wait and review.",
+          "openQuestions": [
+            "Proposed and not implemented yet; design-document evidence will be replaced by source evidence after implementation."
+          ]
+        }
+      },
+      "roleAssessment": {
+        "basis": "out-of-taxonomy",
+        "note": "它是给模型读的说明文档，不执行代码，固定角色分类都不适用。",
+        "translations": {
+          "en": {
+            "note": "It is a document the model reads and runs no code, so no fixed role fits."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-planner-mod",
+      "role": "cache",
+      "name": "Claude 规划者 mod",
+      "kind": "local",
+      "responsibility": "Claude Code 专用：有任务运行且主会话空闲时用 $.model.fork 每 55 分钟刷新缓存，任务结束时唤醒会话，提供 /relay 命令与状态行。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "hooks"
+        },
+        {
+          "kind": "directory",
+          "path": "types"
+        },
+        {
+          "kind": "directory",
+          "path": ".claude-plugin"
+        },
+        {
+          "kind": "file",
+          "path": ".mcp.json"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 42,
+          "note": "模块表：claude-planner-mod 的职责与计划路径。",
+          "translations": {
+            "en": {
+              "note": "Module table: claude-planner-mod responsibility and planned paths."
+            }
+          }
+        },
+        {
+          "path": "docs/design.md",
+          "line": 91,
+          "note": "保活条件、动作、唤醒与空闲压缩观察。",
+          "translations": {
+            "en": {
+              "note": "Keep-alive conditions, action, wake-up and idle-compaction observation."
+            }
+          },
+          "endLine": 97
+        },
+        {
+          "path": "AGENTS.md",
+          "line": 26,
+          "note": "保活规则。",
+          "translations": {
+            "en": {
+              "note": "Keep-alive rule."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "拟新增，尚未实现；实现后以源码证据替换设计文档证据。",
+        "$.model.fork 是否重置 Claude Code 自身的空闲压缩计时尚未验证。"
+      ],
+      "layout": {
+        "row": 1,
+        "column": 1
+      },
+      "translations": {
+        "en": {
+          "name": "Claude planner mod",
+          "responsibility": "Claude Code only: while jobs run and the session is idle it refreshes the cache with $.model.fork every 55 minutes, wakes the session when a job ends, and adds /relay and a status line.",
+          "openQuestions": [
+            "Proposed and not implemented yet; design-document evidence will be replaced by source evidence after implementation.",
+            "Whether $.model.fork resets Claude Code's own idle-compaction timer is unverified."
+          ]
+        }
+      }
+    },
+    {
+      "id": "dispatch-policy",
+      "role": "security",
+      "name": "派发策略与护栏",
+      "kind": "local",
+      "responsibility": "把档位映射到执行者；light 档要求文件范围与检查命令；拒绝与活跃写任务范围重叠的派发；预留执行者失败关闭；执行者角色禁止再派发。",
+      "ownership": [
+        {
+          "kind": "file",
+          "path": "src/policy.mjs"
+        },
+        {
+          "kind": "file",
+          "path": "src/config.mjs"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 37,
+          "note": "模块表：dispatch-policy 的职责与计划路径。",
+          "translations": {
+            "en": {
+              "note": "Module table: dispatch-policy responsibility and planned paths."
+            }
+          }
+        },
+        {
+          "path": "docs/design.md",
+          "line": 24,
+          "note": "档位与护栏表。",
+          "translations": {
+            "en": {
+              "note": "Tier and guard table."
+            }
+          },
+          "endLine": 30
+        },
+        {
+          "path": "AGENTS.md",
+          "line": 14,
+          "note": "light 档护栏与范围冲突规则。",
+          "translations": {
+            "en": {
+              "note": "Light-tier guard and scope-overlap rules."
+            }
+          },
+          "endLine": 16
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "拟新增，尚未实现；实现后以源码证据替换设计文档证据。",
+        "light 档允许的文件数上限取多少（拟默认 10 个）？"
+      ],
+      "layout": {
+        "row": 0,
+        "column": 2
+      },
+      "translations": {
+        "en": {
+          "name": "Dispatch policy",
+          "responsibility": "Maps tiers to executors, requires file scope and checks for light jobs, refuses dispatches that overlap an active write scope, fails closed on reserved executors and blocks dispatch from executor processes.",
+          "openQuestions": [
+            "Proposed and not implemented yet; design-document evidence will be replaced by source evidence after implementation.",
+            "What file-count limit should light jobs have (proposed default: 10)?"
+          ]
+        }
+      }
+    },
+    {
+      "id": "job-store",
+      "role": "queue",
+      "name": "任务存储与状态机",
+      "kind": "local",
+      "responsibility": "在 .agenthub/jobs 下保存任务记录与事件日志，原子写入，按心跳判断 worker 存活，维护 queued→running→verifying→终态。",
+      "ownership": [
+        {
+          "kind": "file",
+          "path": "src/store.mjs"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 38,
+          "note": "模块表：job-store 的职责与计划路径。",
+          "translations": {
+            "en": {
+              "note": "Module table: job-store responsibility and planned path."
+            }
+          }
+        },
+        {
+          "path": "docs/design.md",
+          "line": 57,
+          "note": "任务状态与集成状态。",
+          "translations": {
+            "en": {
+              "note": "Job and integration states."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "拟新增，尚未实现；实现后以源码证据替换设计文档证据。"
+      ],
+      "layout": {
+        "row": 0,
+        "column": 3
+      },
+      "translations": {
+        "en": {
+          "name": "Job store",
+          "responsibility": "Keeps job records and an event log under .agenthub/jobs with atomic writes, detects dead workers by heartbeat and drives queued→running→verifying→terminal.",
+          "openQuestions": [
+            "Proposed and not implemented yet; design-document evidence will be replaced by source evidence after implementation."
+          ]
+        }
+      }
+    },
+    {
+      "id": "worker-runner",
+      "role": "backend",
+      "name": "后台 worker",
+      "kind": "local",
+      "responsibility": "以分离进程运行执行者，处理超时与取消，在 worktree 中逐条运行检查并按 birdview 语义记录，最后写回结果。",
+      "ownership": [
+        {
+          "kind": "file",
+          "path": "src/worker.mjs"
+        },
+        {
+          "kind": "file",
+          "path": "src/checks.mjs"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 41,
+          "note": "模块表：worker-runner 的职责与计划路径。",
+          "translations": {
+            "en": {
+              "note": "Module table: worker-runner responsibility and planned paths."
+            }
+          }
+        },
+        {
+          "path": "docs/design.md",
+          "line": 60,
+          "note": "运行与检查步骤。",
+          "translations": {
+            "en": {
+              "note": "Run and check steps."
+            }
+          },
+          "endLine": 61
+        },
+        {
+          "path": "AGENTS.md",
+          "line": 21,
+          "note": "检查语义规则。",
+          "translations": {
+            "en": {
+              "note": "Check-semantics rule."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "拟新增，尚未实现；实现后以源码证据替换设计文档证据。"
+      ],
+      "layout": {
+        "row": 1,
+        "column": 2
+      },
+      "translations": {
+        "en": {
+          "name": "Background worker",
+          "responsibility": "Runs the executor in a detached process, handles timeout and cancellation, runs checks in the worktree with Birdview semantics and writes the result back.",
+          "openQuestions": [
+            "Proposed and not implemented yet; design-document evidence will be replaced by source evidence after implementation."
+          ]
+        }
+      }
+    },
+    {
+      "id": "executor-adapters",
+      "role": "backend",
+      "name": "执行者适配器",
+      "kind": "local",
+      "responsibility": "为 codex、claude、dsh 构造命令与环境并解析输出；agy 与通用 ACP 在 v0.1 只预留。",
+      "ownership": [
+        {
+          "kind": "file",
+          "path": "src/executors.mjs"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 40,
+          "note": "模块表：executor-adapters 的职责与计划路径。",
+          "translations": {
+            "en": {
+              "note": "Module table: executor-adapters responsibility and planned path."
+            }
+          }
+        },
+        {
+          "path": "docs/design.md",
+          "line": 80,
+          "note": "执行者调用方式与输出。",
+          "translations": {
+            "en": {
+              "note": "Executor invocation and output."
+            }
+          },
+          "endLine": 87
+        },
+        {
+          "path": "AGENTS.md",
+          "line": 9,
+          "note": "预留执行者失败关闭规则。",
+          "translations": {
+            "en": {
+              "note": "Reserved-executor fail-closed rule."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "拟新增，尚未实现；实现后以源码证据替换设计文档证据。",
+        "dsh headless 只有位置参数形式有官方文档，模型与鉴权依赖 dsh 自身配置。"
+      ],
+      "layout": {
+        "row": 1,
+        "column": 3
+      },
+      "translations": {
+        "en": {
+          "name": "Adapters",
+          "responsibility": "Builds commands and environments for codex, claude and dsh and parses their output; agy and generic ACP are reserved in v0.1.",
+          "openQuestions": [
+            "Proposed and not implemented yet; design-document evidence will be replaced by source evidence after implementation.",
+            "Only the positional form of dsh headless is documented; model and authentication come from dsh's own configuration."
+          ]
+        }
+      }
+    },
+    {
+      "id": "git-isolation",
+      "role": "backend",
+      "name": "Git 隔离",
+      "kind": "local",
+      "responsibility": "为每个任务建 worktree 与分支，取基线提交（含未提交改动快照），列出变更、审计越界，并执行补丁应用或丢弃。",
+      "ownership": [
+        {
+          "kind": "file",
+          "path": "src/git.mjs"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 39,
+          "note": "模块表：git-isolation 的职责与计划路径。",
+          "translations": {
+            "en": {
+              "note": "Module table: git-isolation responsibility and planned path."
+            }
+          }
+        },
+        {
+          "path": "docs/design.md",
+          "line": 59,
+          "note": "派发时的基线提交与 worktree。",
+          "translations": {
+            "en": {
+              "note": "Base commit and worktree at dispatch."
+            }
+          }
+        },
+        {
+          "path": "docs/design.md",
+          "line": 62,
+          "note": "越界审计与集成。",
+          "translations": {
+            "en": {
+              "note": "Out-of-scope audit and integration."
+            }
+          },
+          "endLine": 63
+        },
+        {
+          "path": "AGENTS.md",
+          "line": 13,
+          "note": "worktree 隔离规则。",
+          "translations": {
+            "en": {
+              "note": "Worktree isolation rule."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "拟新增，尚未实现；实现后以源码证据替换设计文档证据。",
+        "git stash create 的快照不含未跟踪文件，派发时是否要提示规划者？"
+      ],
+      "layout": {
+        "row": 2,
+        "column": 2
+      },
+      "translations": {
+        "en": {
+          "name": "Git isolation",
+          "responsibility": "Creates a worktree and branch per job from a base commit (including a snapshot of uncommitted changes), lists changes, audits out-of-scope edits and applies or discards the patch.",
+          "openQuestions": [
+            "Proposed and not implemented yet; design-document evidence will be replaced by source evidence after implementation.",
+            "git stash create snapshots omit untracked files; should dispatch warn the planner?"
+          ]
+        }
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "hosts-call-surface",
+      "from": "planner-hosts",
+      "to": "planner-surface",
+      "label": "调用 relay_* 工具",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 49,
+          "note": "关系列表第一条。",
+          "translations": {
+            "en": {
+              "note": "First relationship bullet."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "Calls relay_* tools",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "surface-checks-policy",
+      "from": "planner-surface",
+      "to": "dispatch-policy",
+      "label": "校验档位、范围与冲突",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 50,
+          "note": "派发前的策略校验。",
+          "translations": {
+            "en": {
+              "note": "Policy check before dispatch."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "Checks tier, scope and conflicts",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "policy-reads-claims",
+      "from": "dispatch-policy",
+      "to": "job-store",
+      "label": "读取活跃任务的范围",
+      "kind": "dependency",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 50,
+          "note": "冲突判断依赖活跃任务记录。",
+          "translations": {
+            "en": {
+              "note": "Conflict checks depend on active job records."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "Reads active job scopes",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "surface-records-jobs",
+      "from": "planner-surface",
+      "to": "job-store",
+      "label": "创建与查询任务",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 51,
+          "note": "派发时建记录。",
+          "translations": {
+            "en": {
+              "note": "Dispatch creates the record."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "Creates and queries jobs",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "surface-prepares-worktree",
+      "from": "planner-surface",
+      "to": "git-isolation",
+      "label": "建 worktree、apply/discard",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 51,
+          "note": "派发与集成都经 git-isolation。",
+          "translations": {
+            "en": {
+              "note": "Dispatch and integration both go through git-isolation."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "Creates worktrees, applies or discards",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "surface-starts-worker",
+      "from": "planner-surface",
+      "to": "worker-runner",
+      "label": "以分离进程启动或取消",
+      "kind": "control",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 51,
+          "note": "派发后启动 worker。",
+          "translations": {
+            "en": {
+              "note": "The worker starts after dispatch."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "Starts or cancels as a detached process",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "worker-uses-adapters",
+      "from": "worker-runner",
+      "to": "executor-adapters",
+      "label": "生成命令并解析输出",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 52,
+          "note": "worker 经适配器调用执行者。",
+          "translations": {
+            "en": {
+              "note": "The worker calls executors through adapters."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "Builds commands and parses output",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "adapters-run-clis",
+      "from": "executor-adapters",
+      "to": "executor-clis",
+      "label": "codex exec / claude -p / dsh",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 52,
+          "note": "适配器启动执行者 CLI。",
+          "translations": {
+            "en": {
+              "note": "Adapters launch executor CLIs."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "codex exec / claude -p / dsh",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "clis-return-output",
+      "from": "executor-clis",
+      "to": "executor-adapters",
+      "label": "最终回答与 JSON 事件",
+      "kind": "result",
+      "visibility": "detail",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 84,
+          "note": "dsh 把最后一条回答写到 stdout。",
+          "translations": {
+            "en": {
+              "note": "dsh writes the last answer to stdout."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "Final answer and JSON events",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "worker-audits-changes",
+      "from": "worker-runner",
+      "to": "git-isolation",
+      "label": "变更清单与越界审计",
+      "kind": "dependency",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 52,
+          "note": "worker 收尾时做越界审计。",
+          "translations": {
+            "en": {
+              "note": "The worker audits scope when finishing."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "Change list and scope audit",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "worker-writes-status",
+      "from": "worker-runner",
+      "to": "job-store",
+      "label": "状态、心跳与结果",
+      "kind": "event",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 52,
+          "note": "worker 写回状态与结果。",
+          "translations": {
+            "en": {
+              "note": "The worker writes status and results back."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "Status, heartbeat and result",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "mod-queries-status",
+      "from": "claude-planner-mod",
+      "to": "planner-surface",
+      "label": "$.mcp.call 查询任务",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 53,
+          "note": "mod 经 MCP 查询任务状态。",
+          "translations": {
+            "en": {
+              "note": "The mod queries job status over MCP."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "$.mcp.call queries jobs",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "mod-refreshes-cache",
+      "from": "claude-planner-mod",
+      "to": "anthropic-cache",
+      "label": "$.model.fork 刷新缓存",
+      "kind": "control",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 53,
+          "note": "保活动作。",
+          "translations": {
+            "en": {
+              "note": "Keep-alive action."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "$.model.fork refreshes the cache",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "mod-wakes-planner",
+      "from": "claude-planner-mod",
+      "to": "planner-hosts",
+      "label": "$.prompt.submit 唤醒",
+      "kind": "event",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 53,
+          "note": "任务结束时唤醒 Claude Code。",
+          "translations": {
+            "en": {
+              "note": "Wakes Claude Code when a job ends."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "$.prompt.submit wakes the planner",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    },
+    {
+      "id": "hosts-follow-skill",
+      "from": "planner-hosts",
+      "to": "relay-skill",
+      "label": "按路由手册派发",
+      "kind": "dependency",
+      "visibility": "detail",
+      "evidence": [
+        {
+          "path": "docs/design.md",
+          "line": 43,
+          "note": "规划者读取路由手册。",
+          "translations": {
+            "en": {
+              "note": "Planners read the playbook."
+            }
+          }
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "关系为设计意图，尚未实现。"
+      ],
+      "translations": {
+        "en": {
+          "label": "Dispatches by the playbook",
+          "openQuestions": [
+            "Design intent; not implemented yet."
+          ]
+        }
+      }
+    }
+  ],
+  "constraintDiscovery": {
+    "checkedAt": "2026-10-27T13:31:21Z",
+    "checkedPaths": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "docs/design.md"
+    ],
+    "uninspectedPaths": []
+  },
+  "constraints": [
+    {
+      "id": "c-planner-neutral",
+      "name": "核心代码不假设规划者身份",
+      "note": "适用于全部 src 代码；Claude 专属逻辑只能放在 hooks/、types/、.claude-plugin/。",
+      "origin": "local",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "project",
+      "modules": [],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "line": 7,
+          "quote": "Keep the hub planner-neutral",
+          "note": "AGENTS.md 中的原始规则。",
+          "translations": {
+            "en": {
+              "note": "Original rule in AGENTS.md."
+            }
+          }
+        }
+      ],
+      "verification": "审查 src/ 中是否出现规划者特判，并用非 Claude 客户端名跑 MCP 流程测试。",
+      "translations": {
+        "en": {
+          "name": "Core code never assumes the planner",
+          "note": "Applies to all src code; Claude-specific logic belongs only in hooks/, types/ and .claude-plugin/.",
+          "verification": "Review src/ for planner special cases and run the MCP flow test under a non-Claude client name."
+        }
+      }
+    },
+    {
+      "id": "c-no-runtime-deps",
+      "name": "零运行时依赖",
+      "note": "适用于 hub 运行时的全部模块。",
+      "origin": "local",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "modules",
+      "modules": [
+        "planner-surface",
+        "dispatch-policy",
+        "job-store",
+        "git-isolation",
+        "executor-adapters",
+        "worker-runner"
+      ],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "line": 8,
+          "quote": "Use no runtime dependencies",
+          "note": "AGENTS.md 中的原始规则。",
+          "translations": {
+            "en": {
+              "note": "Original rule in AGENTS.md."
+            }
+          }
+        }
+      ],
+      "verification": "检查 package.json 无 dependencies，并扫描 src/ 的 import 只来自 node:。",
+      "translations": {
+        "en": {
+          "name": "No runtime dependencies",
+          "note": "Applies to every hub runtime module.",
+          "verification": "Check package.json has no dependencies and that src/ imports only node: modules."
+        }
+      }
+    },
+    {
+      "id": "c-reserved-fail-closed",
+      "name": "预留执行者失败关闭",
+      "note": "agy 与通用 ACP 在 v0.1 只预留，派发必须报出原因。",
+      "origin": "local",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "modules",
+      "modules": [
+        "dispatch-policy",
+        "executor-adapters"
+      ],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "line": 9,
+          "quote": "dispatching to a reserved executor must fail closed",
+          "note": "AGENTS.md 中的原始规则。",
+          "translations": {
+            "en": {
+              "note": "Original rule in AGENTS.md."
+            }
+          }
+        }
+      ],
+      "verification": "测试向 agy 派发时返回带原因的错误且不建 worktree。",
+      "translations": {
+        "en": {
+          "name": "Reserved executors fail closed",
+          "note": "agy and generic ACP are reserved in v0.1; dispatch must report why.",
+          "verification": "Test that dispatching to agy errors with a reason and creates no worktree."
+        }
+      }
+    },
+    {
+      "id": "c-worktree-only",
+      "name": "执行者只在自己的 worktree 写",
+      "note": "主工作区只经 relay_apply 改变。",
+      "origin": "local",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "modules",
+      "modules": [
+        "git-isolation",
+        "worker-runner"
+      ],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "line": 13,
+          "quote": "Run every executor inside its own git worktree",
+          "note": "AGENTS.md 中的原始规则。",
+          "translations": {
+            "en": {
+              "note": "Original rule in AGENTS.md."
+            }
+          }
+        }
+      ],
+      "verification": "集成测试确认任务结束后主工作区未变，apply 后才出现改动。",
+      "translations": {
+        "en": {
+          "name": "Executors write only in their own worktree",
+          "note": "The main working tree changes only through relay_apply.",
+          "verification": "Integration test that the main tree is unchanged until apply."
+        }
+      }
+    },
+    {
+      "id": "c-light-tier-guard",
+      "name": "light 档必须有范围和检查",
+      "note": "对应 16 楼“简单明确的任务交给 DeepSeek”的“明确”。",
+      "origin": "local",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "modules",
+      "modules": [
+        "dispatch-policy"
+      ],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "line": 14,
+          "quote": "Refuse a `light` tier job unless it declares an explicit file scope",
+          "note": "AGENTS.md 中的原始规则。",
+          "translations": {
+            "en": {
+              "note": "Original rule in AGENTS.md."
+            }
+          }
+        }
+      ],
+      "verification": "测试缺范围或缺检查的 light 派发被拒绝。",
+      "translations": {
+        "en": {
+          "name": "Light jobs need scope and checks",
+          "note": "Encodes the 'clear and simple' condition for DeepSeek jobs from the forum idea.",
+          "verification": "Test that light dispatches without scope or checks are refused."
+        }
+      }
+    },
+    {
+      "id": "c-scope-overlap",
+      "name": "并发写范围不得重叠",
+      "note": "按目录前缀匹配，避免两个执行者同时改同一处。",
+      "origin": "local",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "modules",
+      "modules": [
+        "dispatch-policy",
+        "job-store"
+      ],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "line": 15,
+          "quote": "Refuse a write job whose scope overlaps the scope of an active write job",
+          "note": "AGENTS.md 中的原始规则。",
+          "translations": {
+            "en": {
+              "note": "Original rule in AGENTS.md."
+            }
+          }
+        }
+      ],
+      "verification": "单元测试前缀判定，集成测试重叠派发被拒。",
+      "translations": {
+        "en": {
+          "name": "Concurrent write scopes must not overlap",
+          "note": "Uses directory-prefix matching so two executors never edit the same place at once.",
+          "verification": "Unit-test prefix matching and integration-test refusal of overlapping dispatch."
+        }
+      }
+    },
+    {
+      "id": "c-executor-role",
+      "name": "执行者禁止再派发",
+      "note": "防止执行者递归派发，也让 mod 在执行者进程中保持静默。",
+      "origin": "local",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "modules",
+      "modules": [
+        "dispatch-policy",
+        "worker-runner",
+        "claude-planner-mod"
+      ],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "line": 16,
+          "quote": "Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`",
+          "note": "AGENTS.md 中的原始规则。",
+          "translations": {
+            "en": {
+              "note": "Original rule in AGENTS.md."
+            }
+          }
+        }
+      ],
+      "verification": "测试带该环境变量时 relay_dispatch 被拒、mod 不注册定时器。",
+      "translations": {
+        "en": {
+          "name": "Executors cannot dispatch",
+          "note": "Prevents recursive dispatch and keeps the mod silent inside executor processes.",
+          "verification": "Test that relay_dispatch is refused and the mod registers no timer under that variable."
+        }
+      }
+    },
+    {
+      "id": "c-secrets",
+      "name": "密钥只按变量名透传",
+      "note": "适用于全项目的记录、日志、事件与测试夹具。",
+      "origin": "local",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "project",
+      "modules": [],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "line": 17,
+          "quote": "Pass secrets only by environment variable name",
+          "note": "AGENTS.md 中的原始规则。",
+          "translations": {
+            "en": {
+              "note": "Original rule in AGENTS.md."
+            }
+          }
+        }
+      ],
+      "verification": "测试任务记录与事件中不含环境变量的值，并人工审查日志写入点。",
+      "translations": {
+        "en": {
+          "name": "Secrets pass only by variable name",
+          "note": "Applies to records, logs, events and fixtures across the project.",
+          "verification": "Test that job records and events hold no environment values and review log writes."
+        }
+      }
+    },
+    {
+      "id": "c-check-semantics",
+      "name": "检查按 birdview 语义记录",
+      "note": "通过、失败、未运行与退出码一一对应；有失败即任务失败。",
+      "origin": "local",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "modules",
+      "modules": [
+        "worker-runner"
+      ],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "line": 21,
+          "quote": "Record checks with Birdview semantics",
+          "note": "AGENTS.md 中的原始规则。",
+          "translations": {
+            "en": {
+              "note": "Original rule in AGENTS.md."
+            }
+          }
+        }
+      ],
+      "verification": "测试通过、失败、超时三种检查的记录与任务终态。",
+      "translations": {
+        "en": {
+          "name": "Checks follow Birdview semantics",
+          "note": "Passed, failed and not-run map to exit codes; any failure fails the job.",
+          "verification": "Test records and terminal states for passing, failing and timed-out checks."
+        }
+      }
+    },
+    {
+      "id": "c-tests",
+      "name": "行为改动必须附测试",
+      "note": "适用于全项目；hooks/ 还需 claude plugin test。",
+      "origin": "local",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "project",
+      "modules": [],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "line": 22,
+          "quote": "Ship every behavior change with a `node --test` test",
+          "note": "AGENTS.md 中的原始规则。",
+          "translations": {
+            "en": {
+              "note": "Original rule in AGENTS.md."
+            }
+          }
+        }
+      ],
+      "verification": "CI 与本地运行 node --test 和 claude plugin test。",
+      "translations": {
+        "en": {
+          "name": "Behavior changes ship with tests",
+          "note": "Applies project-wide; hooks/ also needs claude plugin test.",
+          "verification": "Run node --test and claude plugin test locally and in CI."
+        }
+      }
+    },
+    {
+      "id": "c-keepalive",
+      "name": "保活只用 fork 且有边界",
+      "note": "只在有任务运行、缓存仍热、未超上限时保活，且不增加对话轮次。",
+      "origin": "local",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "modules",
+      "modules": [
+        "claude-planner-mod"
+      ],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "line": 26,
+          "quote": "Keep the Claude Code planner's prompt cache warm only through `$.model.fork`",
+          "note": "AGENTS.md 中的原始规则。",
+          "translations": {
+            "en": {
+              "note": "Original rule in AGENTS.md."
+            }
+          }
+        }
+      ],
+      "verification": "用模拟时钟测试无任务不 fork、冷缓存不 fork、超上限停止。",
+      "translations": {
+        "en": {
+          "name": "Keep-alive uses fork and stays bounded",
+          "note": "Keeps the cache warm only while jobs run, the cache is warm and the ceiling is not reached, without adding turns.",
+          "verification": "Use a mock clock to test no fork without jobs, none on a cold cache and a stop at the ceiling."
+        }
+      }
+    }
+  ]
+}

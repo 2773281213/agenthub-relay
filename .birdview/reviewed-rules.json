@@ -1,0 +1,232 @@
+{
+  "revision": "47e247b1be78d60a0e2c00a1d2c106a373b295be",
+  "scope": "已审阅 AGENTS.md 全部 11 条规则与 CLAUDE.md；docs/design.md 是设计说明，不单独提炼规则；它引用的 skills/agenthub-relay/SKILL.md 尚未创建。",
+  "architectureBinding": {
+    "mapId": "agenthub-relay-system",
+    "mapRevision": 3,
+    "sourceRevision": "47e247b1be78d60a0e2c00a1d2c106a373b295be"
+  },
+  "groups": [
+    {
+      "sourcePath": "AGENTS.md",
+      "category": "interfaces",
+      "topic": {
+        "id": "boundaries",
+        "name": "模块边界"
+      },
+      "rules": [
+        {
+          "id": "rule-planner-neutral",
+          "name": "核心代码不假设规划者身份",
+          "anchor": "Keep the hub planner-neutral",
+          "condition": "在本仓库开发或运行 agenthub-relay 时",
+          "explanation": "适用于全部 src 代码；Claude 专属逻辑只能放在 hooks/、types/、.claude-plugin/。",
+          "verification": "审查 src/ 中是否出现规划者特判，并用非 Claude 客户端名跑 MCP 流程测试。",
+          "applicability": "applicable",
+          "targetRole": "backend",
+          "roleReason": "规则作用于该角色职责。"
+        },
+        {
+          "id": "rule-reserved-fail-closed",
+          "name": "预留执行者失败关闭",
+          "anchor": "dispatching to a reserved executor must fail closed",
+          "condition": "在本仓库开发或运行 agenthub-relay 时",
+          "explanation": "agy 与通用 ACP 在 v0.1 只预留，派发必须报出原因。",
+          "verification": "测试向 agy 派发时返回带原因的错误且不建 worktree。",
+          "applicability": "applicable",
+          "targetRole": "backend",
+          "roleReason": "规则约束的对象属于该角色的模块：dispatch-policy、executor-adapters",
+          "modules": [
+            "dispatch-policy",
+            "executor-adapters"
+          ]
+        }
+      ]
+    },
+    {
+      "sourcePath": "AGENTS.md",
+      "category": "delivery",
+      "topic": {
+        "id": "packaging",
+        "name": "交付形态"
+      },
+      "rules": [
+        {
+          "id": "rule-no-runtime-deps",
+          "name": "零运行时依赖",
+          "anchor": "Use no runtime dependencies",
+          "condition": "在本仓库开发或运行 agenthub-relay 时",
+          "explanation": "适用于 hub 运行时的全部模块。",
+          "verification": "检查 package.json 无 dependencies，并扫描 src/ 的 import 只来自 node:。",
+          "applicability": "applicable",
+          "targetRole": "backend",
+          "roleReason": "规则约束的对象属于该角色的模块：planner-surface、dispatch-policy、job-store、git-isolation、executor-adapters、worker-runner",
+          "modules": [
+            "planner-surface",
+            "dispatch-policy",
+            "job-store",
+            "git-isolation",
+            "executor-adapters",
+            "worker-runner"
+          ]
+        }
+      ]
+    },
+    {
+      "sourcePath": "AGENTS.md",
+      "category": "security",
+      "topic": {
+        "id": "isolation",
+        "name": "隔离与权限"
+      },
+      "rules": [
+        {
+          "id": "rule-worktree-only",
+          "name": "执行者只在自己的 worktree 写",
+          "anchor": "Run every executor inside its own git worktree",
+          "condition": "在本仓库开发或运行 agenthub-relay 时",
+          "explanation": "主工作区只经 relay_apply 改变。",
+          "verification": "集成测试确认任务结束后主工作区未变，apply 后才出现改动。",
+          "applicability": "applicable",
+          "targetRole": "security",
+          "roleReason": "规则约束的对象属于该角色的模块：git-isolation、worker-runner",
+          "modules": [
+            "git-isolation",
+            "worker-runner"
+          ]
+        },
+        {
+          "id": "rule-scope-overlap",
+          "name": "并发写范围不得重叠",
+          "anchor": "Refuse a write job whose scope overlaps the scope of an active write job",
+          "condition": "在本仓库开发或运行 agenthub-relay 时",
+          "explanation": "按目录前缀匹配，避免两个执行者同时改同一处。",
+          "verification": "单元测试前缀判定，集成测试重叠派发被拒。",
+          "applicability": "applicable",
+          "targetRole": "security",
+          "roleReason": "规则约束的对象属于该角色的模块：dispatch-policy、job-store",
+          "modules": [
+            "dispatch-policy",
+            "job-store"
+          ]
+        },
+        {
+          "id": "rule-executor-role",
+          "name": "执行者禁止再派发",
+          "anchor": "Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`",
+          "condition": "在本仓库开发或运行 agenthub-relay 时",
+          "explanation": "防止执行者递归派发，也让 mod 在执行者进程中保持静默。",
+          "verification": "测试带该环境变量时 relay_dispatch 被拒、mod 不注册定时器。",
+          "applicability": "applicable",
+          "targetRole": "security",
+          "roleReason": "规则约束的对象属于该角色的模块：dispatch-policy、worker-runner、claude-planner-mod",
+          "modules": [
+            "dispatch-policy",
+            "worker-runner",
+            "claude-planner-mod"
+          ]
+        }
+      ]
+    },
+    {
+      "sourcePath": "AGENTS.md",
+      "category": "interfaces",
+      "topic": {
+        "id": "dispatch",
+        "name": "派发契约"
+      },
+      "rules": [
+        {
+          "id": "rule-light-tier-guard",
+          "name": "light 档必须有范围和检查",
+          "anchor": "Refuse a `light` tier job unless it declares an explicit file scope",
+          "condition": "在本仓库开发或运行 agenthub-relay 时",
+          "explanation": "对应 16 楼“简单明确的任务交给 DeepSeek”的“明确”。",
+          "verification": "测试缺范围或缺检查的 light 派发被拒绝。",
+          "applicability": "applicable",
+          "targetRole": "backend",
+          "roleReason": "规则约束的对象属于该角色的模块：dispatch-policy",
+          "modules": [
+            "dispatch-policy"
+          ]
+        }
+      ]
+    },
+    {
+      "sourcePath": "AGENTS.md",
+      "category": "security",
+      "topic": {
+        "id": "secrets",
+        "name": "密钥"
+      },
+      "rules": [
+        {
+          "id": "rule-secrets",
+          "name": "密钥只按变量名透传",
+          "anchor": "Pass secrets only by environment variable name",
+          "condition": "在本仓库开发或运行 agenthub-relay 时",
+          "explanation": "适用于全项目的记录、日志、事件与测试夹具。",
+          "verification": "测试任务记录与事件中不含环境变量的值，并人工审查日志写入点。",
+          "applicability": "applicable",
+          "targetRole": "security",
+          "roleReason": "规则作用于该角色职责。"
+        }
+      ]
+    },
+    {
+      "sourcePath": "AGENTS.md",
+      "category": "testing",
+      "topic": {
+        "id": "verification",
+        "name": "验证记录"
+      },
+      "rules": [
+        {
+          "id": "rule-check-semantics",
+          "name": "检查按 birdview 语义记录",
+          "anchor": "Record checks with Birdview semantics",
+          "condition": "在本仓库开发或运行 agenthub-relay 时",
+          "explanation": "通过、失败、未运行与退出码一一对应；有失败即任务失败。",
+          "verification": "测试通过、失败、超时三种检查的记录与任务终态。",
+          "applicability": "applicable",
+          "modules": [
+            "worker-runner"
+          ]
+        },
+        {
+          "id": "rule-tests",
+          "name": "行为改动必须附测试",
+          "anchor": "Ship every behavior change with a `node --test` test",
+          "condition": "在本仓库开发或运行 agenthub-relay 时",
+          "explanation": "适用于全项目；hooks/ 还需 claude plugin test。",
+          "verification": "CI 与本地运行 node --test 和 claude plugin test。",
+          "applicability": "applicable"
+        }
+      ]
+    },
+    {
+      "sourcePath": "AGENTS.md",
+      "category": "lifecycle",
+      "topic": {
+        "id": "keepalive",
+        "name": "缓存保活"
+      },
+      "rules": [
+        {
+          "id": "rule-keepalive",
+          "name": "保活只用 fork 且有边界",
+          "anchor": "Keep the Claude Code planner's prompt cache warm only through `$.model.fork`",
+          "condition": "在本仓库开发或运行 agenthub-relay 时",
+          "explanation": "只在有任务运行、缓存仍热、未超上限时保活，且不增加对话轮次。",
+          "verification": "用模拟时钟测试无任务不 fork、冷缓存不 fork、超上限停止。",
+          "applicability": "applicable",
+          "targetRole": "cache",
+          "roleReason": "规则约束的对象属于该角色的模块：claude-planner-mod",
+          "modules": [
+            "claude-planner-mod"
+          ]
+        }
+      ]
+    }
+  ]
+}
