@@ -151,3 +151,33 @@ test('notifications/cancelled ends an in-flight relay_wait without a response', 
     cleanup();
   }
 });
+
+test('a client that disconnects mid-wait lets the server exit at once', async () => {
+  const { dir, cleanup } = makeRepo();
+  const server = startServer(dir);
+  try {
+    useFakeExecutors(dir);
+    await server.call('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'probe' } });
+    const { data } = await server.tool('relay_dispatch', { tier: 'deep', scope: ['src'], task: fakeTask({ sleepMs: 60_000 }) });
+    server.request('tools/call', { name: 'relay_wait', arguments: { timeoutSeconds: 50 } });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const started = Date.now();
+    await server.stop();
+    assert.ok(Date.now() - started < 5_000, `the server took ${Date.now() - started} ms to exit`);
+
+    // The job itself keeps running in its detached worker; stop it for the test.
+    const again = startServer(dir);
+    try {
+      await again.call('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'probe' } });
+      await again.tool('relay_cancel', { jobId: data.jobId });
+      await waitFor(async () => (await again.tool('relay_status', { jobId: data.jobId })).data.job.status === 'cancelled', {
+        timeoutMs: 20_000,
+        what: 'the cancel',
+      });
+    } finally {
+      await again.stop();
+    }
+  } finally {
+    cleanup();
+  }
+});

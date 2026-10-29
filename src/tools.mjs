@@ -238,16 +238,21 @@ export function createRelay({ cwd = process.cwd(), env = process.env, startWorke
           const more = base.untrackedCount > base.untracked.length ? ', …' : '';
           warnings.push(`${base.untrackedCount} untracked file(s) are not in the job's baseline: ${base.untracked.join(', ')}${more}`);
         }
-        store.create({
-          id,
-          ...plan,
-          planner: { client: clientName() },
-          base,
-          worktree: path.relative(r, dir),
-          branch,
-          passEnv: config.executors[plan.executor].passEnv,
-          warnings,
-        });
+        try {
+          store.create({
+            id,
+            ...plan,
+            planner: { client: clientName() },
+            base,
+            worktree: path.relative(r, dir),
+            branch,
+            passEnv: config.executors[plan.executor].passEnv,
+            warnings,
+          });
+        } catch (err) {
+          await removeWorktree(r, id).catch(() => {});
+          throw err;
+        }
         let pid;
         try {
           pid = startWorker(r, id, env, store.paths(id).workerLog);
@@ -363,12 +368,25 @@ export function createRelay({ cwd = process.cwd(), env = process.env, startWorke
         });
       }
       await applyPatch(r, store.paths(job.id).patch);
-      await removeWorktree(r, job.id);
+      // The patch is in the working tree now: record that before cleanup,
+      // so a failed cleanup cannot make the job look unapplied.
       await store.update(job.id, draft => {
         draft.integration = 'applied';
         draft.appliedAt = new Date().toISOString();
       });
-      return { jobId: job.id, applied: true, files: job.changedFiles ?? [], note: 'The changes are in your working tree, unstaged. Review and commit them.' };
+      let worktreeRemoved = true;
+      try {
+        await removeWorktree(r, job.id);
+      } catch {
+        worktreeRemoved = false;
+      }
+      return {
+        jobId: job.id,
+        applied: true,
+        files: job.changedFiles ?? [],
+        worktreeRemoved,
+        note: 'The changes are in your working tree, unstaged. Review and commit them.',
+      };
     },
 
     async relay_discard(args) {

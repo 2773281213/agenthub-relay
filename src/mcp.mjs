@@ -33,7 +33,11 @@ const INTERNAL_ERROR = -32603;
  */
 export function serveMcp({ relay, input = process.stdin, output = process.stdout, onClient } = {}) {
   const inFlight = new Map();
-  const send = message => output.write(`${JSON.stringify(message)}\n`);
+  let closed = false;
+  output.on?.('error', () => {}); // a client that went away (EPIPE) is not our failure
+  const send = message => {
+    if (!closed) output.write(`${JSON.stringify(message)}\n`);
+  };
   const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
   const replyError = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });
 
@@ -112,5 +116,12 @@ export function serveMcp({ relay, input = process.stdin, output = process.stdout
     }
     handle(message);
   });
-  return new Promise(resolve => lines.on('close', resolve));
+  return new Promise(resolve =>
+    lines.on('close', () => {
+      // The client is gone: stop what it was waiting for, so the process can exit.
+      closed = true;
+      for (const controller of inFlight.values()) controller.abort();
+      resolve();
+    }),
+  );
 }
