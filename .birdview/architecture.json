@@ -2,11 +2,11 @@
  "schemaVersion": 1,
  "language": "zh",
  "mapId": "agenthub-relay-system",
- "revision": 6,
+ "revision": 7,
  "project": {
   "id": "agenthub-relay",
   "name": "agenthub-relay",
-  "revision": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7",
+  "revision": "ca4035bba7126e841b7d94e443000076f209369f",
   "translations": {
    "en": {
     "name": "agenthub-relay"
@@ -14,7 +14,7 @@
   }
  },
  "constraintDiscovery": {
-  "checkedAt": "2026-10-29T12:24:50Z",
+  "checkedAt": "2026-10-29T13:53:38Z",
   "checkedPaths": [
    "AGENTS.md",
    "CLAUDE.md",
@@ -93,21 +93,21 @@
    "evidence": [
     {
      "path": "src/executors.mjs",
-     "line": 135,
+     "line": 140,
      "note": "三家适配器按各自官方 headless 接口编写。",
      "translations": {
       "en": {
        "note": "The three adapters follow each CLI's documented headless interface."
       }
      },
-     "endLine": 220
+     "endLine": 225
     }
    ],
    "status": "uncertain",
    "openQuestions": [
-    "本环境没有运行真实的 codex 与 dsh；适配器按官方文档编写，用伪造执行者做契约测试。",
-    "dsh headless 只用文档化的位置参数形式；模型与鉴权取 dsh 自身配置。",
-    "codex 的推理强度参数（-c model_reasoning_effort）未在真实 CLI 上验证；dsh 没有文档化的按次选模型参数。"
+    "Windows 实测（用户本机，Claude Code 2.1.220 与 DSH Desktop）发现的三个问题已修复，但修复后没有复测；codex 未安装，未在 Windows 上实测。",
+    "dsh headless 只用文档化的位置参数形式；模型与鉴权取 dsh 自身配置，没有文档化的按次选模型参数。",
+    "codex 的推理强度参数（-c model_reasoning_effort）未在真实 CLI 上验证。"
    ],
    "layout": {
     "row": 1,
@@ -118,9 +118,9 @@
      "name": "Executor CLIs",
      "responsibility": "Executor CLIs: codex exec, claude -p and dsh --profile headless; agy and the generic ACP executor are reserved.",
      "openQuestions": [
-      "Real codex and dsh were not run here; the adapters follow the official docs and are contract-tested against a fake executor.",
-      "dsh headless is used only with its documented positional argument; model and authentication come from dsh's own configuration.",
-      "codex's effort flag (-c model_reasoning_effort) is unverified on a real CLI; dsh documents no per-run model flag."
+      "The real run on the user's Windows machine (Claude Code 2.1.220 and DSH Desktop) found three issues, now fixed but not rerun there; codex is not installed and is untested on Windows.",
+      "dsh headless is used only with its documented positional argument; model and authentication come from dsh's own configuration, with no documented per-run model flag.",
+      "codex's effort flag (-c model_reasoning_effort) is unverified on a real CLI."
      ]
     }
    },
@@ -199,7 +199,7 @@
    "evidence": [
     {
      "path": "src/tools.mjs",
-     "line": 29,
+     "line": 30,
      "note": "8 个工具的名称、说明与输入 schema。",
      "translations": {
       "en": {
@@ -210,7 +210,7 @@
     },
     {
      "path": "src/tools.mjs",
-     "line": 187,
+     "line": 189,
      "note": "每个规划者会话一个 relay：根目录解析、观察者、工具处理函数。",
      "translations": {
       "en": {
@@ -232,7 +232,7 @@
     },
     {
      "path": "src/cli.mjs",
-     "line": 314,
+     "line": 323,
      "note": "CLI 命令分发。",
      "translations": {
       "en": {
@@ -243,7 +243,7 @@
     },
     {
      "path": "src/cli.mjs",
-     "line": 112,
+     "line": 113,
      "note": "CLI 派发：任务从参数、文件或 stdin 读入。",
      "translations": {
       "en": {
@@ -254,7 +254,7 @@
     },
     {
      "path": "src/cli.mjs",
-     "line": 189,
+     "line": 190,
      "note": "config show/set/unset。",
      "translations": {
       "en": {
@@ -265,7 +265,7 @@
     },
     {
      "path": "src/tools.mjs",
-     "line": 199,
+     "line": 202,
      "note": "规划者身份：显式参数、环境变量或 MCP 客户端名。",
      "translations": {
       "en": {
@@ -472,7 +472,7 @@
    "evidence": [
     {
      "path": "src/config.mjs",
-     "line": 32,
+     "line": 34,
      "note": "内置 profile：thread16 与 codex-planner。",
      "translations": {
       "en": {
@@ -483,7 +483,7 @@
     },
     {
      "path": "src/config.mjs",
-     "line": 24,
+     "line": 26,
      "note": "预留执行者及原因。",
      "translations": {
       "en": {
@@ -516,7 +516,7 @@
     },
     {
      "path": "src/config.mjs",
-     "line": 216,
+     "line": 219,
      "note": "按层合并配置并选 profile。",
      "translations": {
       "en": {
@@ -527,7 +527,7 @@
     },
     {
      "path": "src/config.mjs",
-     "line": 391,
+     "line": 401,
      "note": "config set：只开放部分键，写前校验。",
      "translations": {
       "en": {
@@ -576,7 +576,7 @@
    "evidence": [
     {
      "path": "src/store.mjs",
-     "line": 141,
+     "line": 143,
      "note": "任务目录与读写接口。",
      "translations": {
       "en": {
@@ -587,7 +587,7 @@
     },
     {
      "path": "src/store.mjs",
-     "line": 81,
+     "line": 83,
      "note": "跨进程锁。",
      "translations": {
       "en": {
@@ -598,7 +598,7 @@
     },
     {
      "path": "src/store.mjs",
-     "line": 111,
+     "line": 113,
      "note": "状态机校验。",
      "translations": {
       "en": {
@@ -609,7 +609,7 @@
     },
     {
      "path": "src/store.mjs",
-     "line": 131,
+     "line": 133,
      "note": "worker 存活检测。",
      "translations": {
       "en": {
@@ -637,7 +637,7 @@
    "role": "backend",
    "name": "后台 worker",
    "kind": "local",
-   "responsibility": "分离的 worker 进程：按进程组运行执行者与检查（超时/取消先 SIGTERM 再 SIGKILL），心跳，检查按 Birdview 语义记录，越界审计，终态判定，passEnv 值脱敏。",
+   "responsibility": "分离的 worker 进程：运行执行者与检查并在超时或取消时结束整棵进程树（POSIX 用进程组先 SIGTERM 再 SIGKILL，Windows 用 taskkill /T /F），每秒读取消标记，心跳，检查经平台 shell 运行并按 Birdview 语义记录，越界审计，终态判定，passEnv 值脱敏；平台差异集中在 src/platform.mjs（命令解析、.cmd 外壳、进程树、带重试的 rename）。",
    "ownership": [
     {
      "kind": "file",
@@ -646,12 +646,16 @@
     {
      "kind": "file",
      "path": "src/checks.mjs"
+    },
+    {
+     "kind": "file",
+     "path": "src/platform.mjs"
     }
    ],
    "evidence": [
     {
      "path": "src/worker.mjs",
-     "line": 47,
+     "line": 49,
      "note": "一个任务从 queued 到终态。",
      "translations": {
       "en": {
@@ -662,7 +666,7 @@
     },
     {
      "path": "src/checks.mjs",
-     "line": 99,
+     "line": 100,
      "note": "进程组、超时与取消。",
      "translations": {
       "en": {
@@ -673,7 +677,7 @@
     },
     {
      "path": "src/checks.mjs",
-     "line": 45,
+     "line": 46,
      "note": "跨块脱敏。",
      "translations": {
       "en": {
@@ -684,7 +688,7 @@
     },
     {
      "path": "src/checks.mjs",
-     "line": 246,
+     "line": 254,
      "note": "终态与验证结论。",
      "translations": {
       "en": {
@@ -692,6 +696,39 @@
       }
      },
      "symbol": "verdict"
+    },
+    {
+     "path": "src/platform.mjs",
+     "line": 124,
+     "note": "按 PATH/PATHEXT 解析命令，.cmd 外壳转为直接启动。",
+     "translations": {
+      "en": {
+       "note": "Resolves commands through PATH/PATHEXT and starts .cmd shims directly."
+      }
+     },
+     "symbol": "resolveCommand"
+    },
+    {
+     "path": "src/platform.mjs",
+     "line": 166,
+     "note": "结束进程树：进程组或 taskkill。",
+     "translations": {
+      "en": {
+       "note": "Ends a process tree: the process group or taskkill."
+      }
+     },
+     "symbol": "killTree"
+    },
+    {
+     "path": "src/platform.mjs",
+     "line": 94,
+     "note": "带环境变量的启动脚本（如 DSH Desktop 的 dsh.cmd）。",
+     "translations": {
+      "en": {
+       "note": "Launcher shims that set variables (such as DSH Desktop's dsh.cmd)."
+      }
+     },
+     "symbol": "launcherShim"
     }
    ],
    "status": "supported",
@@ -703,7 +740,7 @@
    "translations": {
     "en": {
      "name": "Background worker",
-     "responsibility": "The detached worker: runs executors and checks in process groups (SIGTERM, then SIGKILL on timeout or cancel), heartbeats, records checks with Birdview semantics, audits scope, decides the final status and redacts passEnv values."
+     "responsibility": "The detached worker: runs executors and checks and ends their whole process tree on timeout or cancel (the process group with SIGTERM then SIGKILL on POSIX, taskkill /T /F on Windows), reads the cancel flag every second, heartbeats, runs checks in the platform shell and records them with Birdview semantics, audits scope, decides the final status and redacts passEnv values; platform differences live in src/platform.mjs (command resolution, .cmd shims, process trees, retried renames)."
     }
    }
   },
@@ -712,7 +749,7 @@
    "role": "backend",
    "name": "执行者适配器",
    "kind": "local",
-   "responsibility": "三家执行者的命令构造、提示词与输出解析；按 modelArgs/effortArgs 模板传入模型与推理强度（codex -m 与 -c model_reasoning_effort，claude --model 与 --effort，dsh 无文档化参数）；环境变量白名单与按名透传；agy 与 ACP 失败关闭。",
+   "responsibility": "三家执行者的命令构造、提示词与输出解析；按 modelArgs/effortArgs 模板传入模型与推理强度；claude 只用各版本都认识的参数（写入档 acceptEdits，review 不传权限模式）；经 platform.mjs 把命令解析成实际启动的程序与外壳设置的变量；环境变量白名单（含 Windows 必需的系统与用户目录变量）与按名透传；agy 与 ACP 失败关闭。",
    "ownership": [
     {
      "kind": "file",
@@ -722,7 +759,7 @@
    "evidence": [
     {
      "path": "src/executors.mjs",
-     "line": 135,
+     "line": 140,
      "note": "codex、claude、dsh 适配器。",
      "translations": {
       "en": {
@@ -733,7 +770,7 @@
     },
     {
      "path": "src/executors.mjs",
-     "line": 59,
+     "line": 64,
      "note": "执行者环境。",
      "translations": {
       "en": {
@@ -744,7 +781,7 @@
     },
     {
      "path": "src/executors.mjs",
-     "line": 77,
+     "line": 82,
      "note": "执行者收到的规则。",
      "translations": {
       "en": {
@@ -755,7 +792,7 @@
     },
     {
      "path": "src/executors.mjs",
-     "line": 221,
+     "line": 226,
      "note": "预留与未知执行者失败关闭。",
      "translations": {
       "en": {
@@ -766,7 +803,7 @@
     },
     {
      "path": "src/executors.mjs",
-     "line": 130,
+     "line": 135,
      "note": "模型与推理强度参数。",
      "translations": {
       "en": {
@@ -774,6 +811,17 @@
       }
      },
      "symbol": "selectionArgs"
+    },
+    {
+     "path": "src/executors.mjs",
+     "line": 57,
+     "note": "实际启动的命令与外壳变量。",
+     "translations": {
+      "en": {
+       "note": "The command that actually starts and the shim's variables."
+      }
+     },
+     "symbol": "spawnArgv"
     }
    ],
    "status": "supported",
@@ -785,7 +833,7 @@
    "translations": {
     "en": {
      "name": "Adapters",
-     "responsibility": "Command lines, the executor prompt and output parsing for the three executors; model and effort passed through the modelArgs/effortArgs templates (codex -m and -c model_reasoning_effort, claude --model and --effort, no documented flag for dsh); the environment allow-list and pass-by-name; agy and ACP fail closed."
+     "responsibility": "Command lines, the executor prompt and output parsing for the three executors; model and effort through the modelArgs/effortArgs templates; claude gets only flags every release knows (acceptEdits for write tiers, no permission mode for reviews); commands resolve through platform.mjs to the program that runs and the variables a shim sets; the environment allow-list (with the system and profile variables Windows needs) and pass-by-name; agy and ACP fail closed."
     }
    }
   },
@@ -899,7 +947,7 @@
    "evidence": [
     {
      "path": "src/tools.mjs",
-     "line": 256,
+     "line": 259,
      "note": "派发前先做策略判定。",
      "translations": {
       "en": {
@@ -926,7 +974,7 @@
    "evidence": [
     {
      "path": "src/tools.mjs",
-     "line": 255,
+     "line": 258,
      "note": "把已记录任务交给策略。",
      "translations": {
       "en": {
@@ -963,7 +1011,7 @@
    "evidence": [
     {
      "path": "src/tools.mjs",
-     "line": 267,
+     "line": 270,
      "note": "建任务记录。",
      "translations": {
       "en": {
@@ -990,7 +1038,7 @@
    "evidence": [
     {
      "path": "src/tools.mjs",
-     "line": 260,
+     "line": 263,
      "note": "派发时建 worktree。",
      "translations": {
       "en": {
@@ -1000,7 +1048,7 @@
     },
     {
      "path": "src/tools.mjs",
-     "line": 399,
+     "line": 402,
      "note": "apply 时应用补丁。",
      "translations": {
       "en": {
@@ -1027,7 +1075,7 @@
    "evidence": [
     {
      "path": "src/tools.mjs",
-     "line": 121,
+     "line": 122,
      "note": "以分离进程启动 worker。",
      "translations": {
       "en": {
@@ -1037,7 +1085,7 @@
     },
     {
      "path": "src/tools.mjs",
-     "line": 448,
+     "line": 457,
      "note": "取消时通知 worker。",
      "translations": {
       "en": {
@@ -1064,7 +1112,7 @@
    "evidence": [
     {
      "path": "src/worker.mjs",
-     "line": 93,
+     "line": 104,
      "note": "worker 取适配器。",
      "translations": {
       "en": {
@@ -1091,7 +1139,7 @@
    "evidence": [
     {
      "path": "src/worker.mjs",
-     "line": 106,
+     "line": 118,
      "note": "按适配器给出的命令运行执行者。",
      "translations": {
       "en": {
@@ -1123,7 +1171,7 @@
    "evidence": [
     {
      "path": "src/worker.mjs",
-     "line": 123,
+     "line": 135,
      "note": "按适配器解析输出。",
      "translations": {
       "en": {
@@ -1155,7 +1203,7 @@
    "evidence": [
     {
      "path": "src/worker.mjs",
-     "line": 163,
+     "line": 176,
      "note": "收集改动做越界审计。",
      "translations": {
       "en": {
@@ -1182,7 +1230,7 @@
    "evidence": [
     {
      "path": "src/worker.mjs",
-     "line": 59,
+     "line": 61,
      "note": "状态迁移写回存储。",
      "translations": {
       "en": {
@@ -1497,7 +1545,7 @@
     }
    ],
    "explanation": "src/ 不按规划者分支；Claude 专属行为只在 mod 里。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   },
   {
    "id": "c-no-runtime-deps",
@@ -1551,7 +1599,7 @@
     }
    ],
    "explanation": "hub 只用 Node 标准库，插件不需要安装步骤。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   },
   {
    "id": "c-reserved-fail-closed",
@@ -1611,7 +1659,7 @@
     }
    ],
    "explanation": "v0.1 中 agy 与 ACP 只预留，配置也不能启用。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   },
   {
    "id": "c-worktree-only",
@@ -1671,7 +1719,7 @@
     }
    ],
    "explanation": "执行者只写自己的 worktree，规划者审阅后才 apply。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   },
   {
    "id": "c-light-tier-guard",
@@ -1720,7 +1768,7 @@
     }
    ],
    "explanation": "light 档必须有 1–10 条范围（不能是整个仓库）和至少一条检查。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   },
   {
    "id": "c-scope-overlap",
@@ -1770,7 +1818,7 @@
     }
    ],
    "explanation": "仍在运行或已完成未集成的写任务占用其范围。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   },
   {
    "id": "c-executor-role",
@@ -1831,7 +1879,7 @@
     }
    ],
    "explanation": "防止执行者递归派发，mod 也不在执行者里运行。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   },
   {
    "id": "c-secrets",
@@ -1888,7 +1936,7 @@
     }
    ],
    "explanation": "记录里只有变量名；输出、final.md 与存储补丁中的变量值都会脱敏。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   },
   {
    "id": "c-check-semantics",
@@ -1947,7 +1995,7 @@
     }
    ],
    "explanation": "与 Birdview 活动记录的检查语义一致。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   },
   {
    "id": "c-tests",
@@ -1994,7 +2042,7 @@
     }
    ],
    "explanation": "行为改动随附 node --test；mod 改动随附 claude plugin test。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   },
   {
    "id": "c-keepalive",
@@ -2043,7 +2091,7 @@
     }
    ],
    "explanation": "只用 fork，只在有任务运行、缓存推定仍热、未超上限时。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   },
   {
    "id": "c-skill-copy-generated",
@@ -2092,7 +2140,7 @@
     }
    ],
    "explanation": "手改副本会让安装出去的 skill 与经过测试的源码行为不一致。",
-   "baselineCommit": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
+   "baselineCommit": "ca4035bba7126e841b7d94e443000076f209369f"
   }
  ]
 }
