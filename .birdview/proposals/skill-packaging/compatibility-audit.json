@@ -1,0 +1,263 @@
+{
+  "schemaVersion": "2",
+  "generatedAt": "2026-10-29T08:53:32.357Z",
+  "roots": [
+    "/tmp/claude-0/-home-claude/47414796-c778-5dd6-b985-ac263dc529bf/scratchpad/compat2/project/.agents/skills"
+  ],
+  "skills": [
+    {
+      "name": "agenthub-relay",
+      "path": ".agents/skills/agenthub-relay/SKILL.md",
+      "root": "/tmp/claude-0/-home-claude/47414796-c778-5dd6-b985-ac263dc529bf/scratchpad/compat2/project/.agents/skills",
+      "description": "Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) with the bundled relay script - split the work, pick a tier, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.",
+      "digest": "b5cb27598c31f72f26163cab08fba5e8cbc16e50c02453bcc352f5905fe5d0a0",
+      "issues": []
+    },
+    {
+      "name": "birdview",
+      "path": ".agents/skills/birdview/SKILL.md",
+      "root": "/tmp/claude-0/-home-claude/47414796-c778-5dd6-b985-ac263dc529bf/scratchpad/compat2/project/.agents/skills",
+      "description": "Show evidence-linked architecture, constraints and change scope, or review architecture improvement opportunities. Use for Birdview/map requests or requests to optimize architecture, review module boundaries or 优化架构. Also activate before coding when the project explicitly configures Birdview auto mode. Ordinary coding does not activate Birdview without that opt-in.",
+      "digest": "7cd09e004f34a9ffcd006643006f92842c1c7f2ae0cff6a393a7d1e9de9ce235",
+      "issues": []
+    },
+    {
+      "name": "birdview-compatibility",
+      "path": ".agents/skills/birdview-compatibility/SKILL.md",
+      "root": "/tmp/claude-0/-home-claude/47414796-c778-5dd6-b985-ac263dc529bf/scratchpad/compat2/project/.agents/skills",
+      "description": "Audit the installed AI skill environment for duplicate installations, broad triggers and possible instruction conflicts. Use only when the user invokes birdview-compatibility; it does not activate architecture mapping or modify skills.",
+      "digest": "4de6aa0bb0308e57228a5817602f8c3361ecf760824e91f40a17f493e11d859a",
+      "issues": []
+    },
+    {
+      "name": "birdview-review",
+      "path": ".agents/skills/birdview-review/SKILL.md",
+      "root": "/tmp/claude-0/-home-claude/47414796-c778-5dd6-b985-ac263dc529bf/scratchpad/compat2/project/.agents/skills",
+      "description": "Review and improve codebase architecture with source-backed current/proposed diagrams, tradeoffs and verification. Use for birdview-review or requests to optimize architecture, review module boundaries or find architectural refactoring opportunities, including 优化架构、架构评审、梳理模块边界. Ordinary bug fixes, local refactors and discussion of the skill itself do not request a review.",
+      "digest": "012dc7d5d73b8350ea9182f774059c76e7a4aa0b19d91f302e7fb3613c104999",
+      "issues": []
+    },
+    {
+      "name": "relay-review",
+      "path": ".agents/skills/relay-review/SKILL.md",
+      "root": "/tmp/claude-0/-home-claude/47414796-c778-5dd6-b985-ac263dc529bf/scratchpad/compat2/project/.agents/skills",
+      "description": "Ask another agent (Codex, Claude Code or DeepSeek Harness) for a read-only second opinion on a diff, a bug or a design through agenthub-relay. Use only when the user invokes relay-review; it never changes files and does not review architecture.",
+      "digest": "664eff80d4b7a79e003c7fdab15ca3c41841e0bbc257ffdac7844007615be4fb",
+      "issues": []
+    },
+    {
+      "name": "relay-status",
+      "path": ".agents/skills/relay-status/SKILL.md",
+      "root": "/tmp/claude-0/-home-claude/47414796-c778-5dd6-b985-ac263dc529bf/scratchpad/compat2/project/.agents/skills",
+      "description": "Show agenthub-relay jobs in this repository and help decide whether to apply, discard or cancel each one. Use only when the user invokes relay-status.",
+      "digest": "e2f7d0bcc5de42e9cd425c65bdd53c81e40388cae099dc152de43df4524578fc",
+      "issues": []
+    }
+  ],
+  "duplicateNames": [],
+  "assessment": {
+    "status": "reviewed",
+    "reviewedAt": "2026-10-29T08:53:32.000Z",
+    "reviewer": "agent",
+    "language": "zh",
+    "summary": "评估对象是拟议方案的草稿：改版后的 agenthub-relay（自带脚本，MCP 可选）和两个只能显式调用的薄入口 relay-review、relay-status，与 birdview 三件套一起放在共享目录 .agents/skills 里体检。没有重名，没有元数据问题。结论：relay 系列与 birdview、birdview-review 需要排序（先确认计划或评审方案再派发、再 apply），relay-review 与 birdview-review 在只显式调用、不做架构评审的前提下兼容。草稿有一处缺口：relay-status 没写 Birdview 规则，apply 可能绕过计划确认，需补上。另做了一次重复安装模拟：同一个 skill 同时装进 ~/.agents/skills 和 ~/.dsh/skills 时，清单报告重名，因此安装命令应只装共享目录一份。草稿不是已发布的技能，宿主对 disable-model-invocation 的支持只确认了 Claude Code。",
+    "conclusions": [
+      {
+        "leftSkill": "birdview",
+        "rightSkill": "agenthub-relay",
+        "relation": "ordered",
+        "confidence": "high",
+        "scenario": "Birdview 已为本任务启用，规划者要用改版后的 agenthub-relay（脚本或 MCP）派发会改文件的任务。",
+        "impact": "若先派发，执行者会在用户确认计划前改代码，绕过 Birdview 的确认关口。",
+        "rationale": "改版草稿保留了现有的 With Birdview 规则：先确认计划再派发写任务，只读 review 任务可以提前；与 Birdview 允许确认前做只读调查一致。改用脚本不影响这个顺序。",
+        "evidence": [
+          {
+            "skill": "birdview",
+            "path": ".agents/skills/birdview/SKILL.md",
+            "digest": "7cd09e004f34a9ffcd006643006f92842c1c7f2ae0cff6a393a7d1e9de9ce235",
+            "quote": "In both auto and on-demand mode, finish the reviewable map and change plan first: show the HTML preview, affected modules/files, intended behavior, applicable constraints, verification plan and remaining uncertainties. Then ask whether to implement this displayed scope and wait for an explicit reply."
+          },
+          {
+            "skill": "agenthub-relay",
+            "path": ".agents/skills/agenthub-relay/SKILL.md",
+            "digest": "b5cb27598c31f72f26163cab08fba5e8cbc16e50c02453bcc352f5905fe5d0a0",
+            "quote": "When Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation."
+          }
+        ],
+        "recommendation": "保持现有顺序：Birdview 计划确认后再派发 deep/light 任务。实现时把这一条原样保留在新版 SKILL.md。"
+      },
+      {
+        "leftSkill": "birdview-review",
+        "rightSkill": "agenthub-relay",
+        "relation": "ordered",
+        "confidence": "high",
+        "scenario": "架构评审给出候选方案后，规划者想把实现工作派给执行者。",
+        "impact": "若在用户确认方案前派发，评审会变成自动重构。",
+        "rationale": "上一轮体检指出 relay 原文只说“displayed plan”，没有点名评审方案；草稿已把 birdview-review 的方案确认写进同一条规则，歧义消除，置信度由中升为高。",
+        "evidence": [
+          {
+            "skill": "birdview-review",
+            "path": ".agents/skills/birdview-review/SKILL.md",
+            "digest": "012dc7d5d73b8350ea9182f774059c76e7a4aa0b19d91f302e7fb3613c104999",
+            "quote": "Generate source-backed diagrams, show the HTML and wait for confirmation of a concrete proposal before implementing; reuse existing approval of the same displayed scope."
+          },
+          {
+            "skill": "agenthub-relay",
+            "path": ".agents/skills/agenthub-relay/SKILL.md",
+            "digest": "b5cb27598c31f72f26163cab08fba5e8cbc16e50c02453bcc352f5905fe5d0a0",
+            "quote": "When Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation."
+          }
+        ],
+        "recommendation": "采用草稿里的措辞；先确认评审方案，再派发实现任务。"
+      },
+      {
+        "leftSkill": "birdview-review",
+        "rightSkill": "relay-review",
+        "relation": "compatible",
+        "confidence": "medium",
+        "scenario": "用户说“让 Codex 帮忙评审一下架构”这类话，两个名字都带“review”。",
+        "impact": "若两者都自动触发，可能产出两份互相竞争的评审报告。",
+        "rationale": "relay-review 草稿只在用户显式调用时运行（描述写明，并在 Claude Code 里设置 disable-model-invocation），声明不做架构评审，且在架构评审场景把自己的意见交给 birdview-review 合并成一份报告；birdview-review 也要求复用发现、不出竞争报告。Claude Code 会遵守该元数据，其他宿主只能依靠描述文字，所以置信度为中。",
+        "evidence": [
+          {
+            "skill": "birdview-review",
+            "path": ".agents/skills/birdview-review/SKILL.md",
+            "digest": "012dc7d5d73b8350ea9182f774059c76e7a4aa0b19d91f302e7fb3613c104999",
+            "quote": "If another architecture-review skill also applies, follow the user's selection and reuse relevant findings in one review rather than producing competing reports."
+          },
+          {
+            "skill": "relay-review",
+            "path": ".agents/skills/relay-review/SKILL.md",
+            "digest": "664eff80d4b7a79e003c7fdab15ca3c41841e0bbc257ffdac7844007615be4fb",
+            "quote": "When the user asks for an architecture review, birdview-review owns the report; offer this second opinion as an input to that one review instead of producing a separate report."
+          }
+        ],
+        "recommendation": "relay-review 保持仅显式调用，描述里保留“does not review architecture”；架构问题走 birdview-review，需要另一家意见时再把 relay-review 的结果并入同一份评审。"
+      },
+      {
+        "leftSkill": "agenthub-relay",
+        "rightSkill": "relay-review",
+        "relation": "compatible",
+        "confidence": "high",
+        "scenario": "用户在派发写任务的同时，用 relay-review 请另一家做只读复核。",
+        "impact": "复核任务不会改动工作区，也不占用写任务的范围。",
+        "rationale": "relay-review 只派发 review 档任务，任何改动都记为越界且不会 apply；agenthub-relay 允许只读 review 任务在确认前运行。两者共用同一个脚本，没有相互冲突的写权限。",
+        "evidence": [
+          {
+            "skill": "relay-review",
+            "path": ".agents/skills/relay-review/SKILL.md",
+            "digest": "664eff80d4b7a79e003c7fdab15ca3c41841e0bbc257ffdac7844007615be4fb",
+            "quote": "A review job is read-only: any change it makes is reported out of scope and is never applied."
+          },
+          {
+            "skill": "agenthub-relay",
+            "path": ".agents/skills/agenthub-relay/SKILL.md",
+            "digest": "b5cb27598c31f72f26163cab08fba5e8cbc16e50c02453bcc352f5905fe5d0a0",
+            "quote": "Read-only `review` jobs may run before confirmation."
+          }
+        ],
+        "recommendation": "无需处理；relay-review 作为 agenthub-relay 的薄入口即可。"
+      },
+      {
+        "leftSkill": "birdview",
+        "rightSkill": "relay-status",
+        "relation": "ordered",
+        "confidence": "medium",
+        "scenario": "Birdview 启用时，用户用 relay-status 查看任务并决定 apply。",
+        "impact": "apply 会把执行者的改动写进主工作区；若该任务不在已确认的计划范围内，就等于绕过 Birdview 改了代码，活动记录也缺少对应的 editing 事件。",
+        "rationale": "Birdview 在确认前禁止修改实现文件；relay-status 草稿只要求用户同意后再 apply，但没有提到 Birdview。用户同意 apply 不等于确认了 Birdview 的计划，需要补一条顺序规则。",
+        "evidence": [
+          {
+            "skill": "birdview",
+            "path": ".agents/skills/birdview/SKILL.md",
+            "digest": "7cd09e004f34a9ffcd006643006f92842c1c7f2ae0cff6a393a7d1e9de9ce235",
+            "quote": "Before confirmation, read-only investigation and writing map/constraint/plan artifacts are allowed; do not edit implementation, tests or project configuration, or emit `editing` events."
+          },
+          {
+            "skill": "relay-status",
+            "path": ".agents/skills/relay-status/SKILL.md",
+            "digest": "e2f7d0bcc5de42e9cd425c65bdd53c81e40388cae099dc152de43df4524578fc",
+            "quote": "run `apply`, `discard` or `cancel` only after the user says which."
+          }
+        ],
+        "recommendation": "在 relay-status 草稿中加入：Birdview 启用时，只 apply 属于已确认计划的任务，并在 apply 前记录 editing 事件；超出范围先更新计划再确认。"
+      },
+      {
+        "leftSkill": "agenthub-relay",
+        "rightSkill": "relay-status",
+        "relation": "compatible",
+        "confidence": "high",
+        "scenario": "用户用 relay-status 查看 agenthub-relay 派发的任务并决定去留。",
+        "impact": "只有用户点头后才会改动主工作区。",
+        "rationale": "agenthub-relay 规定主工作区只在 apply 时改变；relay-status 只在用户明确选择后执行 apply、discard 或 cancel。两者对写入时机的要求一致。",
+        "evidence": [
+          {
+            "skill": "agenthub-relay",
+            "path": ".agents/skills/agenthub-relay/SKILL.md",
+            "digest": "b5cb27598c31f72f26163cab08fba5e8cbc16e50c02453bcc352f5905fe5d0a0",
+            "quote": "Executors run in their own git worktrees; your working tree changes only when you run `apply`."
+          },
+          {
+            "skill": "relay-status",
+            "path": ".agents/skills/relay-status/SKILL.md",
+            "digest": "e2f7d0bcc5de42e9cd425c65bdd53c81e40388cae099dc152de43df4524578fc",
+            "quote": "run `apply`, `discard` or `cancel` only after the user says which."
+          }
+        ],
+        "recommendation": "无需处理。"
+      },
+      {
+        "leftSkill": "birdview",
+        "rightSkill": "birdview-review",
+        "relation": "compatible",
+        "confidence": "high",
+        "scenario": "用户说“优化架构”这类话，两个技能的触发描述都会命中。",
+        "impact": "两者约定合并为一次评审，不会出两份报告。",
+        "rationale": "与上一轮体检相同：同一个 Birdview 包，birdview 把架构优化请求转入评审流程，并规定两个入口都被选中时只做一次评审。",
+        "evidence": [
+          {
+            "skill": "birdview",
+            "path": ".agents/skills/birdview/SKILL.md",
+            "digest": "7cd09e004f34a9ffcd006643006f92842c1c7f2ae0cff6a393a7d1e9de9ce235",
+            "quote": "If both entries are selected, perform one review using this shared workflow."
+          },
+          {
+            "skill": "birdview-review",
+            "path": ".agents/skills/birdview-review/SKILL.md",
+            "digest": "012dc7d5d73b8350ea9182f774059c76e7a4aa0b19d91f302e7fb3613c104999",
+            "quote": "If another architecture-review skill also applies, follow the user's selection and reuse relevant findings in one review rather than producing competing reports."
+          }
+        ],
+        "recommendation": "无需处理。"
+      },
+      {
+        "leftSkill": "birdview",
+        "rightSkill": "birdview-compatibility",
+        "relation": "compatible",
+        "confidence": "high",
+        "scenario": "首次设置 Birdview 或用户单独调用体检。",
+        "impact": "体检只读、只在显式调用时运行，不会启动架构图，也不会修改其他技能。",
+        "rationale": "与上一轮体检相同。",
+        "evidence": [
+          {
+            "skill": "birdview",
+            "path": ".agents/skills/birdview/SKILL.md",
+            "digest": "7cd09e004f34a9ffcd006643006f92842c1c7f2ae0cff6a393a7d1e9de9ce235",
+            "quote": "On first Birdview setup in an environment, follow [skill-compatibility.md](references/skill-compatibility.md) and run the read-only `skills audit` once."
+          },
+          {
+            "skill": "birdview-compatibility",
+            "path": ".agents/skills/birdview-compatibility/SKILL.md",
+            "digest": "4de6aa0bb0308e57228a5817602f8c3361ecf760824e91f40a17f493e11d859a",
+            "quote": "This instruction is an audit request, not approval to change configuration. Do not disable, rewrite, delete or reinstall another skill. Do not start Birdview architecture or constraint mapping unless the user separately asks for it."
+          }
+        ],
+        "recommendation": "无需处理。"
+      }
+    ]
+  },
+  "notes": [
+    "Inventory facts and semantic conclusions are separate.",
+    "Conclusions cover only cited skill pairs and stated scenarios; other combinations remain unassessed."
+  ]
+}

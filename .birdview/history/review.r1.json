@@ -1,0 +1,818 @@
+{
+ "schemaVersion": "2",
+ "project": "agenthub-relay",
+ "revision": "2026-10-29-arch-review-1",
+ "sourceRevision": "481f29791b043bbc9b29c79bcba07e2c91fa8393",
+ "workingTree": {
+  "dirty": []
+ },
+ "baseline": "v0.1 刚按批准的范围实现完成，本轮评审把它当作当前状态。",
+ "sources": [
+  {
+   "kind": "rule",
+   "path": "AGENTS.md"
+  },
+  {
+   "kind": "rule",
+   "path": "CLAUDE.md"
+  },
+  {
+   "kind": "doc",
+   "path": "docs/design.md"
+  },
+  {
+   "kind": "doc",
+   "path": "skills/agenthub-relay/SKILL.md"
+  }
+ ],
+ "architectureBinding": {
+  "mapId": "agenthub-relay-system",
+  "revision": 5
+ },
+ "scope": "已检查 src/ 全部 10 个文件、hooks/register.ts 及其测试、test/ 下的测试辅助；按模块边界、调用方需要知道的内容和可测性评审。",
+ "gaps": [
+  "项目没有术语表或 ADR，设计依据是 docs/design.md 与 AGENTS.md。",
+  "没有用真实的 codex、dsh 运行，执行者适配器的边界只按官方文档和契约测试评估。"
+ ],
+ "language": "zh",
+ "recommendation": {
+  "candidate": "status-contract",
+  "reason": "保活与唤醒是 16 楼思路的核心，它们依赖的状态格式目前没有契约；补输出 schema 和一条契约测试成本最低，能防止字段改名让保活静默失效。"
+ },
+ "candidates": [
+  {
+   "id": "status-contract",
+   "title": "保活所依赖的状态格式没有契约",
+   "lede": "mod 每分钟读 relay_status 来决定保活和唤醒，但它读到的字段由 hub 的 summarize() 决定，mod 里另抄了一份类型，解析后直接断言，测试只喂手写桩。",
+   "impact": "hub 改一个字段名（如 resultFetched），node 测试和 mod 测试都会照样通过，而保活和唤醒会静默失效：等待中的 Claude Code 缓存过期，任务结束也不会被叫醒。",
+   "strength": "strong",
+   "dependency": "local-substitutable",
+   "modules": [
+    "planner-surface",
+    "claude-planner-mod"
+   ],
+   "evidence": [
+    {
+     "path": "src/tools.mjs",
+     "lines": {
+      "start": 135,
+      "end": 152
+     },
+     "quote": "function summarize(job) {\n  return {\n    id: job.id,\n    title: job.title,\n    tier: job.tier,\n    executor: job.executor,\n    status: job.status,\n    integration: job.integration,\n    verification: job.verification,\n    createdAt: job.createdAt,\n    startedAt: job.startedAt,\n    endedAt: job.endedAt,\n    changedFiles: job.changedFiles?.length,\n    outOfScope: job.outOfScope?.length,\n    resultFetched: Boolean(job.resultFetchedAt),\n    error: job.error?.code,\n  };\n}",
+     "note": "hub 决定状态里有哪些字段",
+     "symbol": "summarize"
+    },
+    {
+     "path": "hooks/register.ts",
+     "lines": {
+      "start": 25,
+      "end": 34
+     },
+     "quote": "export type RelayJob = {\n  id: string\n  title?: string\n  tier?: string\n  executor?: string\n  status: string\n  integration?: string\n  verification?: string\n  resultFetched?: boolean\n}",
+     "note": "mod 手写的同一组字段",
+     "symbol": "RelayJob"
+    },
+    {
+     "path": "hooks/register.ts",
+     "lines": {
+      "start": 149,
+      "end": 151
+     },
+     "quote": "  const parsed: unknown = JSON.parse(text)\n  const jobs = (parsed as { jobs?: unknown }).jobs\n  return Array.isArray(jobs) ? (jobs as RelayJob[]) : undefined",
+     "note": "解析后直接断言成 RelayJob",
+     "symbol": "pollJobs"
+    },
+    {
+     "path": "src/mcp.mjs",
+     "lines": {
+      "start": 53,
+      "end": 53
+     },
+     "quote": "      if (!controller.signal.aborted) reply(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });",
+     "note": "结果只放在文本内容里",
+     "symbol": "callTool"
+    },
+    {
+     "path": "hooks/register.test.ts",
+     "lines": {
+      "start": 41,
+      "end": 41
+     },
+     "quote": "    return { value: { content: [{ type: 'text', text: JSON.stringify({ jobs: seen.jobs }) }], isError: false } }",
+     "note": "mod 测试用手写的状态桩",
+     "symbol": "world"
+    }
+   ],
+   "before": {
+    "caption": "字段在 hub 里定义、在 mod 里重抄，中间只有一段 JSON 文本，没有任何一方检查两边是否一致。",
+    "nodes": [
+     {
+      "id": "mod",
+      "label": "Claude Code mod",
+      "kind": "caller",
+      "row": 1,
+      "column": 1,
+      "modules": [
+       "claude-planner-mod"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "status-tool",
+      "label": "relay_status 处理函数",
+      "kind": "module",
+      "row": 1,
+      "column": 2,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": [
+       0
+      ]
+     },
+     {
+      "id": "summarize",
+      "label": "summarize() 字段",
+      "kind": "step",
+      "row": 2,
+      "column": 2,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": [
+       0
+      ]
+     },
+     {
+      "id": "as-cast",
+      "label": "JSON.parse + as 断言",
+      "kind": "step",
+      "row": 3,
+      "column": 1,
+      "modules": [
+       "claude-planner-mod"
+      ],
+      "evidence": [
+       2
+      ]
+     },
+     {
+      "id": "json-text",
+      "label": "只有 text 内容",
+      "kind": "step",
+      "row": 3,
+      "column": 2,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": [
+       3
+      ]
+     },
+     {
+      "id": "relayjob",
+      "label": "手写 RelayJob 类型",
+      "kind": "step",
+      "row": 4,
+      "column": 1,
+      "modules": [
+       "claude-planner-mod"
+      ],
+      "evidence": [
+       1
+      ]
+     },
+     {
+      "id": "stub",
+      "label": "mod 测试的手写桩",
+      "kind": "step",
+      "row": 4,
+      "column": 2,
+      "modules": [
+       "claude-planner-mod"
+      ],
+      "evidence": [
+       4
+      ]
+     }
+    ],
+    "edges": [
+     {
+      "from": "mod",
+      "to": "status-tool"
+     },
+     {
+      "from": "status-tool",
+      "to": "summarize"
+     },
+     {
+      "from": "summarize",
+      "to": "json-text"
+     },
+     {
+      "from": "json-text",
+      "to": "as-cast"
+     },
+     {
+      "from": "as-cast",
+      "to": "relayjob"
+     },
+     {
+      "from": "stub",
+      "to": "relayjob"
+     }
+    ]
+   },
+   "after": {
+    "caption": "relay_status 声明输出 schema 并返回 structuredContent，一条契约测试用真实输出核对 mod 依赖的字段。",
+    "nodes": [
+     {
+      "id": "mod",
+      "label": "Claude Code mod",
+      "kind": "caller",
+      "row": 1,
+      "column": 1,
+      "modules": [
+       "claude-planner-mod"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "status-tool",
+      "label": "relay_status 处理函数",
+      "kind": "module",
+      "row": 1,
+      "column": 2,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "contract",
+      "label": "状态输出契约（outputSchema）",
+      "kind": "deep",
+      "row": 2,
+      "column": 1,
+      "span": 2,
+      "modules": [
+       "planner-surface",
+       "claude-planner-mod"
+      ],
+      "evidence": [],
+      "absorbs": [
+       "summarize",
+       "json-text",
+       "as-cast",
+       "relayjob"
+      ]
+     },
+     {
+      "id": "contract-test",
+      "label": "契约测试（真实输出）",
+      "kind": "step",
+      "row": 3,
+      "column": 1,
+      "span": 2,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": []
+     }
+    ],
+    "edges": [
+     {
+      "from": "mod",
+      "to": "contract",
+      "label": "读取"
+     },
+     {
+      "from": "status-tool",
+      "to": "contract",
+      "label": "产出"
+     },
+     {
+      "from": "contract-test",
+      "to": "contract",
+      "label": "核对字段"
+     }
+    ],
+    "seams": [
+     {
+      "label": "outputSchema",
+      "below": "contract"
+     }
+    ]
+   },
+   "findings": [
+    {
+     "id": "f-dup-fields",
+     "kind": "duplicate",
+     "note": "字段定义两份",
+     "targets": [
+      "summarize",
+      "relayjob"
+     ],
+     "evidence": [
+      0,
+      1
+     ],
+     "confidence": "observed",
+     "detail": "RelayJob 逐个重抄 summarize() 返回的 id、status、integration、resultFetched 等字段；两份定义分别在 Node 模块和 mod 里，没有共同来源。"
+    },
+    {
+     "id": "f-no-contract",
+     "kind": "missing-seam",
+     "note": "没有输出契约",
+     "targets": [
+      "json-text",
+      "as-cast"
+     ],
+     "evidence": [
+      2,
+      3
+     ],
+     "confidence": "observed",
+     "detail": "MCP 结果只有一段 JSON 文本，relay_status 没有声明 outputSchema；mod 解析后用 as 断言类型，字段缺失或改名时不会报错，只会让判定悄悄变成“没有任务”。"
+    },
+    {
+     "id": "f-stub-only",
+     "kind": "leak",
+     "note": "测试只测手写桩",
+     "targets": [
+      "stub",
+      "relayjob"
+     ],
+     "evidence": [
+      4
+     ],
+     "confidence": "observed",
+     "detail": "mod 测试的 relay_status 桩按 RelayJob 手写，从不使用服务器的真实输出；hub 的 node 测试又不知道 mod 依赖哪些字段，两边各自通过也证明不了它们对得上。"
+    }
+   ],
+   "callerKnowledge": {
+    "before": [
+     "字段名逐个对齐",
+     "JSON 包在 text 里",
+     "integration 取值",
+     "resultFetched"
+    ],
+    "after": [
+     "读声明的输出"
+    ]
+   },
+   "solution": "为 relay_status 声明 outputSchema 并返回 structuredContent；加一条 node 契约测试，用真实服务输出核对 mod 依赖的字段，mod 读结构化结果并在缺字段时报错。",
+   "deletionTest": {
+    "verdict": "keep",
+    "text": "mod 在没有 Node 的环境里运行，只能经 MCP 读状态，这层边界不能删；要补的是边界上的契约，而不是去掉一层。"
+   },
+   "wins": [
+    {
+     "kind": "seam",
+     "text": "状态格式只在 schema 一处声明"
+    },
+    {
+     "kind": "testability",
+     "text": "契约测试用真实输出，字段改名立刻失败"
+    },
+    {
+     "kind": "leverage",
+     "text": "Codex 等规划者也能直接读结构化状态"
+    }
+   ],
+   "verification": [
+    "relay_status 的 structuredContent 通过 outputSchema 校验",
+    "把 resultFetched 改名后契约测试失败",
+    "现有 mod 测试与 node 测试不改断言仍通过"
+   ],
+   "boundaries": [
+    "relay_status 的文本输出保持不变，旧客户端照常可读",
+    "mod 的保活判定规则",
+    "job.json 的字段"
+   ],
+   "cost": "小：一个 schema、tools.mjs 与 mcp.mjs 各几行、一条契约测试、mod 改读 structuredContent；不改工具名与参数。"
+  },
+  {
+   "id": "job-lifecycle",
+   "title": "派发与集成的步骤写在工具层",
+   "lede": "派发要按取锁、对账、策略、快照、worktree、建记录、启动 worker 的顺序进行，失败还要清理；这些只写在 relay_dispatch 处理函数里，apply 也一样。",
+   "impact": "测试为了在进程内跑 worker 重抄了派发步骤（缺锁和清理），CLI 和不讲 MCP 的脚本无法派发；以后改派发顺序要同时记得改测试里的副本。",
+   "strength": "worth-exploring",
+   "dependency": "in-process",
+   "modules": [
+    "planner-surface",
+    "dispatch-policy",
+    "git-isolation",
+    "job-store",
+    "worker-runner"
+   ],
+   "evidence": [
+    {
+     "path": "src/tools.mjs",
+     "lines": {
+      "start": 229,
+      "end": 235
+     },
+     "quote": "      return store.withDispatchLock(async () => {\n        const jobs = await listJobs(store);\n        const plan = planDispatch({ request: args, config, jobs, role: env.AGENTHUB_RELAY_ROLE });\n        const base = await snapshotBase(r);\n        await ensureExcluded(r);\n        const id = newJobId();\n        const { dir, branch } = await addWorktree(r, id, base.commit);",
+     "note": "派发顺序写在工具处理函数里",
+     "symbol": "relay_dispatch"
+    },
+    {
+     "path": "src/tools.mjs",
+     "lines": {
+      "start": 253,
+      "end": 253
+     },
+     "quote": "          await removeWorktree(r, id).catch(() => {});",
+     "note": "建记录失败时的清理只在这里",
+     "symbol": "relay_dispatch"
+    },
+    {
+     "path": "src/tools.mjs",
+     "lines": {
+      "start": 258,
+      "end": 258
+     },
+     "quote": "          pid = startWorker(r, id, env, store.paths(id).workerLog);",
+     "note": "启动 worker",
+     "symbol": "relay_dispatch"
+    },
+    {
+     "path": "test/relay.test.mjs",
+     "lines": {
+      "start": 25,
+      "end": 35
+     },
+     "quote": "async function prepareJob(root, request) {\n  const config = loadConfig({ root, env: process.env });\n  const store = createStore(root);\n  const plan = planDispatch({ request, config, jobs: store.list() });\n  const id = newJobId();\n  const base = await snapshotBase(root);\n  await ensureExcluded(root);\n  const { dir, branch } = await addWorktree(root, id, base.commit);\n  store.create({ id, ...plan, base, worktree: path.relative(root, dir), branch, passEnv: config.executors[plan.executor].passEnv });\n  return id;\n}",
+     "note": "测试重抄派发步骤，没有锁与清理",
+     "symbol": "prepareJob"
+    },
+    {
+     "path": "src/cli.mjs",
+     "lines": {
+      "start": 20,
+      "end": 23
+     },
+     "quote": "  agenthub-relay mcp            Serve the relay_* tools over stdio for any MCP client\n  agenthub-relay doctor [--json] Show the repository, profile and installed executors\n  agenthub-relay status [--json] List jobs in this repository\n  agenthub-relay worker <jobId> Run one job (relay_dispatch starts this for you)",
+     "note": "CLI 没有派发命令",
+     "symbol": "HELP"
+    },
+    {
+     "path": "src/tools.mjs",
+     "lines": {
+      "start": 370,
+      "end": 379
+     },
+     "quote": "      await applyPatch(r, store.paths(job.id).patch);\n      // The patch is in the working tree now: record that before cleanup,\n      // so a failed cleanup cannot make the job look unapplied.\n      await store.update(job.id, draft => {\n        draft.integration = 'applied';\n        draft.appliedAt = new Date().toISOString();\n      });\n      let worktreeRemoved = true;\n      try {\n        await removeWorktree(r, job.id);",
+     "note": "apply 的步骤同样写在工具里",
+     "symbol": "relay_apply"
+    }
+   ],
+   "before": {
+    "caption": "派发的顺序与清理只存在于 MCP 处理函数，测试抄了一份不完整的副本，CLI 没有入口。",
+    "nodes": [
+     {
+      "id": "mcp-dispatch",
+      "label": "relay_dispatch（MCP）",
+      "kind": "caller",
+      "row": 1,
+      "column": 1,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "test-prepare",
+      "label": "测试 prepareJob",
+      "kind": "caller",
+      "row": 1,
+      "column": 2,
+      "modules": [],
+      "evidence": []
+     },
+     {
+      "id": "cli",
+      "label": "CLI（无 dispatch）",
+      "kind": "caller",
+      "row": 1,
+      "column": 3,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "tools",
+      "label": "tools.mjs 处理函数",
+      "kind": "module",
+      "row": 2,
+      "column": 1,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": [
+       0,
+       2,
+       5
+      ]
+     },
+     {
+      "id": "copy",
+      "label": "重抄的派发步骤",
+      "kind": "step",
+      "row": 2,
+      "column": 2,
+      "modules": [],
+      "evidence": [
+       3
+      ]
+     },
+     {
+      "id": "lock",
+      "label": "派发锁 + 对账",
+      "kind": "step",
+      "row": 3,
+      "column": 1,
+      "modules": [
+       "job-store"
+      ],
+      "evidence": [
+       0
+      ]
+     },
+     {
+      "id": "plan",
+      "label": "planDispatch",
+      "kind": "step",
+      "row": 3,
+      "column": 2,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": [
+       0
+      ]
+     },
+     {
+      "id": "snapshot",
+      "label": "快照 + worktree",
+      "kind": "step",
+      "row": 4,
+      "column": 1,
+      "modules": [
+       "git-isolation"
+      ],
+      "evidence": [
+       0
+      ]
+     },
+     {
+      "id": "record",
+      "label": "建记录 / 失败清理",
+      "kind": "step",
+      "row": 4,
+      "column": 2,
+      "modules": [
+       "job-store",
+       "git-isolation"
+      ],
+      "evidence": [
+       1
+      ]
+     },
+     {
+      "id": "start",
+      "label": "启动 worker",
+      "kind": "step",
+      "row": 5,
+      "column": 1,
+      "modules": [
+       "worker-runner"
+      ],
+      "evidence": [
+       2
+      ]
+     }
+    ],
+    "edges": [
+     {
+      "from": "mcp-dispatch",
+      "to": "tools"
+     },
+     {
+      "from": "tools",
+      "to": "lock"
+     },
+     {
+      "from": "lock",
+      "to": "plan"
+     },
+     {
+      "from": "plan",
+      "to": "snapshot"
+     },
+     {
+      "from": "snapshot",
+      "to": "record"
+     },
+     {
+      "from": "record",
+      "to": "start"
+     },
+     {
+      "from": "test-prepare",
+      "to": "copy"
+     },
+     {
+      "from": "copy",
+      "to": "snapshot",
+      "label": "绕过锁与清理"
+     }
+    ]
+   },
+   "after": {
+    "caption": "一个任务生命周期模块负责派发、apply、discard、cancel 的顺序与清理，MCP、CLI 和测试都调用它。",
+    "nodes": [
+     {
+      "id": "mcp-dispatch",
+      "label": "relay_dispatch（MCP）",
+      "kind": "caller",
+      "row": 1,
+      "column": 1,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "test-prepare",
+      "label": "测试 prepareJob",
+      "kind": "caller",
+      "row": 1,
+      "column": 2,
+      "modules": [],
+      "evidence": []
+     },
+     {
+      "id": "cli",
+      "label": "CLI dispatch",
+      "kind": "caller",
+      "row": 1,
+      "column": 3,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "jobs",
+      "label": "任务生命周期 jobs.mjs",
+      "kind": "deep",
+      "row": 2,
+      "column": 1,
+      "span": 3,
+      "modules": [
+       "planner-surface",
+       "job-store",
+       "git-isolation",
+       "worker-runner"
+      ],
+      "evidence": [],
+      "absorbs": [
+       "tools",
+       "copy",
+       "lock",
+       "snapshot",
+       "record",
+       "start"
+      ]
+     },
+     {
+      "id": "plan",
+      "label": "planDispatch",
+      "kind": "step",
+      "row": 3,
+      "column": 2,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": []
+     }
+    ],
+    "edges": [
+     {
+      "from": "mcp-dispatch",
+      "to": "jobs"
+     },
+     {
+      "from": "test-prepare",
+      "to": "jobs"
+     },
+     {
+      "from": "cli",
+      "to": "jobs"
+     },
+     {
+      "from": "jobs",
+      "to": "plan"
+     }
+    ],
+    "seams": [
+     {
+      "label": "dispatch/apply/discard",
+      "below": "jobs"
+     }
+    ]
+   },
+   "findings": [
+    {
+     "id": "f-order",
+     "kind": "ordering",
+     "note": "顺序只在工具层",
+     "targets": [
+      "lock",
+      "plan",
+      "snapshot",
+      "record"
+     ],
+     "evidence": [
+      0,
+      1
+     ],
+     "confidence": "observed",
+     "detail": "派发必须先取锁并对账存活，再做策略判定、取快照、建 worktree、建记录、启动 worker，建记录失败还要删掉 worktree；这些顺序和清理只写在 relay_dispatch 里。"
+    },
+    {
+     "id": "f-copy",
+     "kind": "duplicate",
+     "note": "测试复制派发步骤",
+     "targets": [
+      "copy",
+      "snapshot"
+     ],
+     "evidence": [
+      3
+     ],
+     "confidence": "observed",
+     "detail": "test/relay.test.mjs 的 prepareJob 为在进程内驱动 worker，重抄了策略、快照、排除、worktree、建记录，但没有派发锁和失败清理；派发顺序一改，副本就会悄悄过时。"
+    },
+    {
+     "id": "f-no-cli",
+     "kind": "missing-seam",
+     "note": "CLI 不能派发",
+     "targets": [
+      "cli"
+     ],
+     "evidence": [
+      4
+     ],
+     "confidence": "observed",
+     "detail": "CLI 只有 mcp、worker、doctor、status；不讲 MCP 的脚本或 CI 想派发任务，只能自己重写这套步骤。"
+    }
+   ],
+   "callerKnowledge": {
+    "before": [
+     "先拿派发锁",
+     "先对账再判策略",
+     "快照后建 worktree",
+     "失败要删 worktree",
+     "最后启动 worker"
+    ],
+    "after": [
+     "调 dispatch()"
+    ]
+   },
+   "solution": "新增 src/jobs.mjs，把派发、apply、discard、cancel 的步骤与清理收进去；tools.mjs 只做参数转换，CLI 增加 dispatch，测试直接调用 jobs.dispatch()。",
+   "deletionTest": {
+    "verdict": "narrow",
+    "text": "删掉 tools.mjs 里的流程后，复杂度没有转给调用方，而是集中到 jobs.mjs；tools.mjs 仍保留工具 schema 与参数转换，只是变窄。"
+   },
+   "wins": [
+    {
+     "kind": "locality",
+     "text": "派发顺序与失败清理只写在一处"
+    },
+    {
+     "kind": "leverage",
+     "text": "CLI 和脚本也能派发任务"
+    },
+    {
+     "kind": "testability",
+     "text": "测试调用真实派发，不再维护副本"
+    }
+   ],
+   "verification": [
+    "MCP、CLI 与测试经同一个 dispatch() 派发，记录字段一致",
+    "建记录失败时 worktree 被删除（单测）",
+    "现有 node 测试不改断言仍全部通过"
+   ],
+   "boundaries": [
+    "relay_* 工具的名称与参数",
+    "job.json 的字段",
+    "worker 进程的启动参数"
+   ],
+   "cost": "小到中等：约 150 行从 tools.mjs 移到新模块，测试辅助改为调用它；v0.1 刚完成，还没有外部调用方。"
+  }
+ ]
+}
