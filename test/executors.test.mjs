@@ -4,7 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { loadConfig } from '../src/config.mjs';
-import { adapterFor, buildPrompt, childEnv, describeExecutors, findOnPath, MAX_ARGV_PROMPT_BYTES } from '../src/executors.mjs';
+import { adapterFor, buildPrompt, childEnv, describeExecutors, findOnPath, MAX_ARGV_PROMPT_BYTES, selectionArgs } from '../src/executors.mjs';
 import { tempDir } from './helpers.mjs';
 
 const config = loadConfig({ env: {} });
@@ -147,4 +147,33 @@ test('availability is looked up on PATH; reserved executors are listed with thei
   } finally {
     cleanup();
   }
+});
+
+test('a job model and effort go on each command line through the documented flags', () => {
+  const chosen = job({ model: 'gpt-5.1-codex', effort: 'high' });
+  const codex = adapterFor('codex').invocation(chosen, config.executors.codex, files, 'P').argv;
+  assert.deepEqual(codex, [
+    'codex', 'exec', '--json', '--sandbox', 'workspace-write', '-o', files.final,
+    '-m', 'gpt-5.1-codex', '-c', 'model_reasoning_effort=high', '-',
+  ]);
+
+  const claude = adapterFor('claude').invocation(job({ model: 'opus', effort: 'max' }), config.executors.claude, files, 'P').argv;
+  assert.deepEqual(claude.slice(claude.indexOf('--model'), claude.indexOf('--model') + 4), ['--model', 'opus', '--effort', 'max']);
+  assert.ok(claude.indexOf('--model') < claude.indexOf('--allowedTools'), 'flags precede the variadic --allowedTools');
+
+  const plain = adapterFor('claude').invocation(job(), config.executors.claude, files, 'P').argv;
+  assert.ok(!plain.includes('--model') && !plain.includes('--effort'), 'no flags without a chosen model');
+
+  const dshCfg = { ...config.executors.dsh, modelArgs: ['--model={model}'] };
+  const dsh = adapterFor('dsh').invocation(job({ tier: 'light', model: 'deepseek-flash' }), dshCfg, files, 'PROMPT').argv;
+  assert.deepEqual(dsh.slice(-2), ['--model=deepseek-flash', 'PROMPT']);
+  assert.deepEqual(selectionArgs({}, config.executors.dsh), []);
+});
+
+test('relay_agents reports default models and which executors can take one', () => {
+  const described = describeExecutors(config, { PATH: '' });
+  const byId = Object.fromEntries(described.map(entry => [entry.id, entry]));
+  assert.equal(byId.codex.choosesModel, true);
+  assert.equal(byId.claude.choosesEffort, true);
+  assert.equal(byId.dsh.choosesModel, false);
 });

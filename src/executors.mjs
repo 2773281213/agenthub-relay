@@ -126,12 +126,18 @@ function lastJsonObject(text) {
   return undefined;
 }
 
+/** The model and effort flags for a job, from the executor's argument templates. */
+export function selectionArgs(job, cfg) {
+  const fill = (template, placeholder, value) => (value === undefined ? [] : (template ?? []).map(arg => arg.split(placeholder).join(value)));
+  return [...fill(cfg.modelArgs, '{model}', job.model), ...fill(cfg.effortArgs, '{effort}', job.effort)];
+}
+
 const ADAPTERS = Object.freeze({
   codex: {
     label: 'Codex CLI',
     invocation(job, cfg, files, prompt) {
       return {
-        argv: [cfg.command, 'exec', '--json', '--sandbox', job.write ? 'workspace-write' : 'read-only', '-o', files.final, ...cfg.extraArgs, '-'],
+        argv: [cfg.command, 'exec', '--json', '--sandbox', job.write ? 'workspace-write' : 'read-only', '-o', files.final, ...selectionArgs(job, cfg), ...cfg.extraArgs, '-'],
         stdin: prompt,
       };
     },
@@ -176,7 +182,7 @@ const ADAPTERS = Object.freeze({
         '--permission-prompts', 'none',
       ];
       if (cfg.bare) argv.push('--bare');
-      argv.push(...cfg.extraArgs);
+      argv.push(...selectionArgs(job, cfg), ...cfg.extraArgs);
       // A variadic option goes last so that nothing after it is read as a tool.
       if (job.checks?.length) argv.push('--allowedTools', ...job.checks.map(check => `Bash(${check})`));
       return { argv, stdin: prompt };
@@ -202,7 +208,7 @@ const ADAPTERS = Object.freeze({
       if (Buffer.byteLength(prompt) > MAX_ARGV_PROMPT_BYTES) {
         throw fail('prompt-too-long', `dsh takes the task as one argument; this one is over ${MAX_ARGV_PROMPT_BYTES} bytes`);
       }
-      return { argv: [cfg.command, '--profile', 'headless', ...cfg.extraArgs, prompt], stdin: null };
+      return { argv: [cfg.command, '--profile', 'headless', ...selectionArgs(job, cfg), ...cfg.extraArgs, prompt], stdin: null };
     },
     parse({ exitCode, stdout, stderr }) {
       const ok = exitCode === 0;
@@ -231,6 +237,10 @@ export function describeExecutors(config, env = process.env) {
       available: found !== null,
       path: found ?? undefined,
       tiers: tiersOf(id),
+      model: cfg.model,
+      effort: cfg.effort,
+      choosesModel: (cfg.modelArgs ?? []).length > 0,
+      choosesEffort: (cfg.effortArgs ?? []).length > 0,
       timeoutMinutes: cfg.timeoutMinutes,
       passEnv: cfg.passEnv,
     };
