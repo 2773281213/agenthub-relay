@@ -33,17 +33,19 @@ test('codex runs `codex exec --json` with the sandbox matching the tier and the 
   assert.equal(review.argv[review.argv.indexOf('--sandbox') + 1], 'read-only');
 });
 
-test('claude runs headless with prompts denied, edits accepted only for write tiers and checks allowed', () => {
+// Found in the real run on Windows: Claude Code 2.1.220 has no --permission-prompts
+// and calls "manual" "default"; -p denies whatever would prompt in every release.
+test('claude runs headless, edits accepted only for write tiers, checks allowed, with flags every release knows', () => {
   const claude = adapterFor('claude');
   const write = claude.invocation(job(), config.executors.claude, files, 'PROMPT');
   assert.deepEqual(write.argv, [
-    'claude', '-p', '--output-format', 'json', '--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
+    'claude', '-p', '--output-format', 'json', '--permission-mode', 'acceptEdits',
     '--allowedTools', 'Bash(npm test)', 'Bash(npm run lint -- --max-warnings 0)',
   ]);
   assert.equal(write.stdin, 'PROMPT');
   const review = claude.invocation(job({ tier: 'review', write: false, checks: [] }), { ...config.executors.claude, bare: true, extraArgs: ['--model', 'opus'] }, files, 'P');
   assert.deepEqual(review.argv, [
-    'claude', '-p', '--output-format', 'json', '--permission-mode', 'manual', '--permission-prompts', 'none', '--bare', '--model', 'opus',
+    'claude', '-p', '--output-format', 'json', '--bare', '--model', 'opus',
   ]);
 });
 

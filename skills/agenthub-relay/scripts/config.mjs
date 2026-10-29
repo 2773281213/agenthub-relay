@@ -81,7 +81,8 @@ export function configPath(root, env = process.env) {
 /** Where the optional user config file lives, or null without a home directory. */
 export function userConfigPath(env = process.env) {
   if (env.AGENTHUB_RELAY_USER_CONFIG) return path.resolve(env.AGENTHUB_RELAY_USER_CONFIG);
-  const base = env.XDG_CONFIG_HOME || (env.HOME ? path.join(env.HOME, '.config') : null);
+  const home = env.HOME || env.USERPROFILE;
+  const base = env.XDG_CONFIG_HOME || (home ? path.join(home, '.config') : null);
   return base ? path.join(base, 'agenthub-relay', 'config.json') : null;
 }
 

@@ -49,14 +49,15 @@ export function findOnPath(command, envPath = process.env.PATH ?? '', platform =
 }
 
 /**
- * The argv to spawn for an adapter's argv: its command resolved to the
- * program that actually runs (an .exe, or node plus the script an npm/pnpm
- * shim wraps on Windows). An unknown command is left as is, so spawning it
- * reports that it cannot start.
+ * What to spawn for an adapter's argv: its command resolved to the program
+ * that actually runs (an .exe, or node plus the script an npm/pnpm shim wraps
+ * on Windows), and the variables a launcher shim would have set. An unknown
+ * command is left as is, so spawning it reports that it cannot start.
  */
 export function spawnArgv(argv, { env = process.env, platform = process.platform } = {}) {
   const resolved = resolveCommand(argv[0], { env, platform });
-  return resolved ? [resolved.file, ...resolved.prefixArgs, ...argv.slice(1)] : argv;
+  if (!resolved) return { argv, env: {} };
+  return { argv: [resolved.file, ...resolved.prefixArgs, ...argv.slice(1)], env: resolved.env ?? {} };
 }
 
 /** The environment an executor runs with, and which named variables it got. */
@@ -180,11 +181,11 @@ const ADAPTERS = Object.freeze({
   claude: {
     label: 'Claude Code',
     invocation(job, cfg, files, prompt) {
-      const argv = [
-        cfg.command, '-p', '--output-format', 'json',
-        '--permission-mode', job.write ? 'acceptEdits' : 'manual',
-        '--permission-prompts', 'none',
-      ];
+      // In -p mode anything that would ask for permission is denied, so a
+      // review needs no mode (the newer "manual" is "default" in older
+      // releases, and --permission-prompts is not in them at all).
+      const argv = [cfg.command, '-p', '--output-format', 'json'];
+      if (job.write) argv.push('--permission-mode', 'acceptEdits');
       if (cfg.bare) argv.push('--bare');
       argv.push(...selectionArgs(job, cfg), ...cfg.extraArgs);
       // A variadic option goes last so that nothing after it is read as a tool.

@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { checkShell, childSpawnOptions, envValue, killTree, renameWithRetry, resolveCommand, shimTarget, workerSpawnOptions } from '../src/platform.mjs';
+import { spawnArgv } from '../src/executors.mjs';
+import { checkShell, childSpawnOptions, envValue, killTree, launcherShim, renameWithRetry, resolveCommand, shimTarget, workerSpawnOptions } from '../src/platform.mjs';
 import { tempDir } from './helpers.mjs';
 
 // The shim npm (cmd-shim) writes for a global package bin.
@@ -160,4 +161,50 @@ test('a rename that Windows refuses for a moment is retried', () => {
   assert.throws(() => renameWithRetry('a', 'b', { fsImpl: broken, delayMs: 1 }), err => err.code === 'ENOENT');
   const stuck = { renameSync: () => { throw Object.assign(new Error('locked'), { code: 'EBUSY' }); } };
   assert.throws(() => renameWithRetry('a', 'b', { fsImpl: stuck, attempts: 3, delayMs: 1 }), err => err.code === 'EBUSY');
+});
+
+// DSH Desktop's dsh.cmd, as found on the user's Windows machine in the real run.
+const DSH_DESKTOP_SHIM = (exe, script) => `@echo off\r
+setlocal DisableDelayedExpansion\r
+for /f "tokens=2 delims=:" %%c in ('chcp 2^>nul') do set "DSH_RUNTIME_CODEPAGE=%%c"\r
+chcp 65001>nul 2>nul\r
+set "ELECTRON_RUN_AS_NODE=1"\r
+if not defined DSH_HOME set "DSH_HOME=%USERPROFILE%\\.dsh"\r
+set "DSH_DESKTOP_DEFAULT_PROFILE=desktop"\r
+"${exe}" --expose-internals "${script}" %*\r
+set "DSH_RUNTIME_EXIT=%errorlevel%"\r
+chcp %DSH_RUNTIME_CODEPAGE% >nul 2>nul\r
+exit /b %DSH_RUNTIME_EXIT%\r
+`;
+
+test('a launcher shim that sets variables and starts an .exe runs that .exe with them', () => {
+  const { dir, cleanup } = tempDir('agenthub-dsh-');
+  try {
+    const exe = path.join(dir, 'DSH Desktop', 'DSH Desktop.exe');
+    const script = path.join(dir, 'DSH Desktop', 'resources', 'app', 'lib', 'desktop-cli.js');
+    write(exe);
+    write(script);
+    const bin = path.join(dir, 'bin');
+    write(path.join(bin, 'dsh.cmd'), DSH_DESKTOP_SHIM(exe, script));
+    const env = { Path: bin, PATHEXT: '.EXE;.CMD', USERPROFILE: 'C:\\Users\\me' };
+    const resolved = resolveCommand('dsh', { env, platform: 'win32' });
+    assert.equal(resolved.via, 'shim-exe');
+    assert.equal(resolved.file, exe);
+    assert.deepEqual(resolved.prefixArgs, ['--expose-internals', script]);
+    assert.deepEqual(resolved.env, { ELECTRON_RUN_AS_NODE: '1', DSH_HOME: 'C:\\Users\\me\\.dsh', DSH_DESKTOP_DEFAULT_PROFILE: 'desktop' });
+
+    const launch = spawnArgv(['dsh', '--profile', 'headless', 'line one\nline two'], { env: { ...env, DSH_HOME: 'D:\\dsh' }, platform: 'win32' });
+    assert.deepEqual(launch.argv, [exe, '--expose-internals', script, '--profile', 'headless', 'line one\nline two'], 'the task stays one argument');
+    assert.equal(launch.env.DSH_HOME, undefined, 'a DSH_HOME the user already set is kept');
+    assert.equal(launch.env.ELECTRON_RUN_AS_NODE, '1');
+    assert.deepEqual(spawnArgv(['nowhere'], { env, platform: 'win32' }), { argv: ['nowhere'], env: {} });
+  } finally {
+    cleanup();
+  }
+});
+
+test('launcher shims of other shapes are not guessed at', () => {
+  assert.equal(launcherShim('@echo off\r\ncall other.bat %*\r\n'), null);
+  assert.equal(launcherShim('"relative\\tool.exe" %*'), null);
+  assert.equal(launcherShim('"C:\\x\\tool.exe" %UNKNOWN% %*'), null, 'arguments with variables are not expanded blindly');
 });

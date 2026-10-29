@@ -92,6 +92,7 @@ test('the user file defaults to XDG_CONFIG_HOME, then ~/.config', () => {
   assert.equal(userConfigPath({ XDG_CONFIG_HOME: '/x' }), path.join('/x', 'agenthub-relay', 'config.json'));
   assert.equal(userConfigPath({ HOME: '/h' }), path.join('/h', '.config', 'agenthub-relay', 'config.json'));
   assert.equal(userConfigPath({}), null);
+  assert.equal(userConfigPath({ USERPROFILE: 'C:\\Users\\me' }), path.join('C:\\Users\\me', '.config', 'agenthub-relay', 'config.json'), 'Windows has no HOME');
 });
 
 test('route values parse as executor[:model][@effort]', () => {

@@ -79,8 +79,43 @@ export function shimTarget(shimFile, text = fs.readFileSync(shimFile, 'utf8')) {
   return path.join(path.dirname(shimFile), ...relative.split(/[\\/]+/).filter(Boolean));
 }
 
+function expand(value, env, platform) {
+  return value.replace(/%([A-Za-z_][\w()]*)%/g, (whole, name) => envValue(env, name, platform) ?? whole);
+}
+
 /**
- * How to start `command`: `{ file, prefixArgs, via, path }`, or null when it
+ * A launcher shim that sets some variables and then starts a program by its
+ * absolute path, as DSH Desktop's dsh.cmd does:
+ *   if not defined DSH_HOME set "DSH_HOME=%USERPROFILE%\.dsh"
+ *   set "ELECTRON_RUN_AS_NODE=1"
+ *   "E:\...\DSH Desktop.exe" --expose-internals "E:\...\desktop-cli.js" %*
+ * Returns { file, prefixArgs, env } or null when the shim has another shape.
+ */
+export function launcherShim(text, { env = process.env, platform = process.platform } = {}) {
+  const assigned = {};
+  let launch = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim().replace(/^@/, '');
+    const set = /^(?:if not defined ([A-Za-z_]\w*) )?set "([A-Za-z_]\w*)=([^"]*)"$/i.exec(line);
+    if (set) {
+      const [, guard, name, value] = set;
+      if (guard && (envValue(env, guard, platform) !== undefined || assigned[guard] !== undefined)) continue;
+      assigned[name] = expand(value, { ...env, ...assigned }, platform);
+      continue;
+    }
+    if (!line.endsWith('%*')) continue;
+    const call = /^"([^"%]+\.exe)"((?:\s+(?:"[^"%]*"|[^\s"%]+))*)\s+%\*$/i.exec(line);
+    if (!call) return null;
+    const args = [...call[2].matchAll(/"([^"]*)"|(\S+)/g)].map(match => match[1] ?? match[2]);
+    launch = { file: call[1], args };
+    break; // variables set after the launch do not reach the program
+  }
+  if (!launch || !(path.win32.isAbsolute(launch.file) || path.posix.isAbsolute(launch.file))) return null;
+  return { file: launch.file, prefixArgs: launch.args, env: assigned };
+}
+
+/**
+ * How to start `command`: `{ file, prefixArgs, via, path, env? }`, or null when it
  * cannot be found. A .js file runs with this Node.js. On Windows a .cmd/.bat
  * shim is resolved to the program it wraps, so arguments reach it verbatim
  * instead of through cmd.exe; a shim that cannot be read that way fails
@@ -97,7 +132,12 @@ export function resolveCommand(command, { env = process.env, platform = process.
   if (platform !== 'win32' || !WINDOWS_SHIMS.has(path.extname(found).toLowerCase())) {
     return { file: found, prefixArgs: [], via: 'direct', path: found };
   }
-  const target = shimTarget(found);
+  const text = fs.readFileSync(found, 'utf8');
+  const target = shimTarget(found, text);
+  if (!target) {
+    const launcher = launcherShim(text, { env, platform });
+    if (launcher && isFile(launcher.file)) return { ...launcher, via: 'shim-exe', path: found };
+  }
   if (!target || !isFile(target)) {
     throw fail(
       'windows-shim-unsupported',

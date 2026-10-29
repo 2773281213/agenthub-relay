@@ -169,7 +169,7 @@ async function status(args) {
   }
   for (const job of jobs) {
     const state = TERMINAL.has(job.status) ? `${job.status}/${job.integration}` : job.status;
-    const route = `${job.tier}→${job.executor}${job.model ? `:${job.model}` : ''}`;
+    const route = `${job.tier}->${job.executor}${job.model ? `:${job.model}` : ''}`;
     process.stdout.write(`${job.id}  ${state.padEnd(20)} ${route.padEnd(24)} ${job.verification ?? ''}  ${job.title}\n`);
   }
   return 0;
@@ -216,7 +216,7 @@ async function config(args) {
       `profile: ${report.profile} (${report.profileReason})`,
       'tiers:',
       ...Object.entries(report.routes).map(([tier, r]) => `  ${tier.padEnd(7)} ${r.executor}${r.model ? `  model ${r.model}` : '  model: executor default'}${r.effort ? `  effort ${r.effort}` : ''}`),
-      `planner profiles: ${Object.entries(report.plannerProfiles).map(([p, name]) => `${p}→${name}`).join(', ')}`,
+      `planner profiles: ${Object.entries(report.plannerProfiles).map(([p, name]) => `${p}->${name}`).join(', ')}`,
       `profiles: ${report.profiles.join(', ')}`,
       `files applied: ${report.files.applied.length ? report.files.applied.join(', ') : 'none (built-in defaults)'}`,
       `user file: ${report.files.user ?? 'none (no home directory)'}`,
@@ -294,7 +294,7 @@ async function doctor(args) {
   if (report.configError) {
     lines.push(`configuration error: ${report.configError}`);
   } else {
-    const mapping = Object.entries(report.mapping).map(([tier, executor]) => `${tier}→${executor}`).join(', ');
+    const mapping = Object.entries(report.mapping).map(([tier, executor]) => `${tier}->${executor}`).join(', ');
     lines.push(`configuration: ${report.config}`, `planner: ${report.planner}`, `profile: ${report.profile} (${mapping}; ${report.profileReason})`, 'executors:');
     for (const entry of report.executors) {
       const tiers = entry.tiers.length ? ` [${entry.tiers.join(', ')}]` : '';

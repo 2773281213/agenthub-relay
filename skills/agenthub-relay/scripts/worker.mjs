@@ -114,10 +114,11 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
       draft.passedEnv = passed; // names only
     });
     store.appendEvent(jobId, { type: 'executor-started', executor: job.executor });
+    const launch = spawnArgv(invocation.argv, { env: executorEnv });
     const run = await runProcess({
-      argv: spawnArgv(invocation.argv, { env: executorEnv }),
+      argv: launch.argv,
       cwd: worktree,
-      env: executorEnv,
+      env: { ...executorEnv, ...launch.env },
       stdin: invocation.stdin,
       timeoutMs: job.timeoutMinutes * 60_000,
       logFile: files.executorLog,
