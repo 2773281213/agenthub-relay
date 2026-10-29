@@ -1,6 +1,6 @@
 {
   "name": "agenthub-relay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A planner-neutral hub that hands coding jobs to Codex, Claude Code or DeepSeek Harness in isolated git worktrees, with a Claude Code mod that keeps a waiting planner's prompt cache warm.",
   "type": "module",
@@ -19,9 +19,18 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "bundle:skill": "node tools/bundle-skill.mjs",
     "test:mod": "claude plugin test .",
     "validate": "claude plugin validate .",
-    "check": "npm test && npm run validate && npm run test:mod"
+    "check": "node tools/bundle-skill.mjs --check && npm test && npm run validate && npm run test:mod"
   },
-  "keywords": ["multi-agent", "mcp", "codex", "claude-code", "deepseek", "worktree", "prompt-cache"]
+  "keywords": [
+    "multi-agent",
+    "mcp",
+    "codex",
+    "claude-code",
+    "deepseek",
+    "worktree",
+    "prompt-cache"
+  ]
 }

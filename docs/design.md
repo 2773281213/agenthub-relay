@@ -105,7 +105,7 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 
 ## 11. 路线图
 
-- v0.2：通用 ACP 执行器（Claude 经 `claude-agent-acp`、Codex 经 `codex-acp`、dsh 原生 `--profile acp`、agy 官方 ACP server），之后可把 Paseo、bb、Lody 作为可选后端。
+- 之后：通用 ACP 执行器（Claude 经 `claude-agent-acp`、Codex 经 `codex-acp`、dsh 原生 `--profile acp`、agy 官方 ACP server），之后可把 Paseo、bb、Lody 作为可选后端。
 - Antigravity headless 适配器（`agy -p --output-format json`）。
 
 ## 12. 实现与设计的差异（v0.1）
@@ -116,6 +116,18 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 4. `passEnv` 变量的值在执行者与检查的输出、日志、`final.md` 和存储的补丁里都替换为 `[redacted]`，跨输出块也能识别；执行者把密钥写进仓库文件时，任务会给出警告。
 5. light 档的范围不能是整个仓库（`.`）；已完成但尚未 apply 或 discard 的写任务继续占用它的范围。
 6. 插件选项键名为 `keep_alive`、`interval_minutes`、`ceiling_hours`、`wake_on_finish`；mod 只为本会话盯过（见过正在运行）的任务发唤醒。
+
+## 13. v0.2：skill 自带脚本，在使用中选择规划者、执行者与模型
+
+起因是第 2 轮架构评审的候选 skill-cli，以及“skill 没法设置模型、也没法决定谁规划谁执行”的反馈。
+
+1. **CLI 走完全流程**：`agents`、`dispatch`、`wait`、`result`、`apply`、`discard`、`cancel`、`status`、`config` 都经 `createRelay().call()`，与 MCP 共用同一套派发顺序和记录；JSON 输出，退出码 0/1/2。`createRelay` 的 `maxWaitSeconds` 让 MCP 保持 50 秒、CLI 最长 3600 秒。
+2. **skill 自带 hub**：`skills/agenthub-relay/scripts/` 是 `src/` 的生成副本（`npm run bundle:skill`），复制整个 skill 目录即可使用，测试保证副本与源码一致。`src/` 仍是唯一源码。
+3. **规划者身份**：`--planner`、`AGENTHUB_RELAY_PLANNER` 或 MCP 客户端名识别出 claude、codex、dsh、agy 或 unknown，写进任务记录。profile 的选取顺序：`AGENTHUB_RELAY_PROFILE` → 配置里的 `plannerProfiles` → 配置里的 `profile` → 内置的规划者默认（codex → `codex-planner`）→ `thread16`。hub 仍不假设谁在规划，身份只用来选 profile。
+4. **模型与推理强度**：档位映射可写 `{executor, model, effort}`，执行者有默认 `model`/`effort` 与参数模板 `modelArgs`/`effortArgs`。单个任务的取值：请求 → 档位映射（仅当执行者相同）→ 执行者默认。没有对应参数的执行者（dsh）以 `model-unsupported`/`effort-unsupported` 失败关闭，不静默忽略。
+5. **设置**：用户级文件在下、项目级文件在上；`config set/unset` 只开放 profile、plannerProfiles、档位路由和执行者的 model/effort/command/timeoutMinutes，写前校验，原子替换；`passEnv` 仍只能手改。执行者角色不能改设置。
+6. **入口**：`relay-review`、`relay-status`、`relay-config` 三个只能显式调用的薄入口，共用同一脚本；Birdview 启用时 relay-status 只 apply 已确认计划内的任务。
+7. 规划者自身的模型由宿主决定，不在本项目范围内。
 
 ## 来源
 

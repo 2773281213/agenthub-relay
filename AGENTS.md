@@ -6,14 +6,15 @@ These rules apply to every agent working in this repository, whichever agent is 
 
 - Keep the hub planner-neutral: code under `src/` must not assume which agent is the planner; Claude Code specific behavior lives only in `hooks/`, `types/` and `.claude-plugin/`.
 - Use no runtime dependencies: the hub ships as plain ESM JavaScript for Node.js 20 or newer, and code under `src/` imports only the Node.js standard library.
-- Treat Antigravity (`agy`) and the generic ACP executor as reserved in v0.1: dispatching to a reserved executor must fail closed with an error that names the reason.
+- Treat Antigravity (`agy`) and the generic ACP executor as reserved until their adapters exist: dispatching to a reserved executor must fail closed with an error that names the reason.
+- Generate `skills/agenthub-relay/scripts/` from `src/` with `npm run bundle:skill` and never edit that copy by hand; it must stay identical to `src/`, which `npm test` checks.
 
 ## Execution safety rules
 
 - Run every executor inside its own git worktree under `.agenthub/worktrees/`; the main working tree may change only through `relay_apply`.
 - Refuse a `light` tier job unless it declares an explicit file scope and at least one check command.
 - Refuse a write job whose scope overlaps the scope of an active write job, using directory-prefix matching (`src/api` covers `src/api/x.ts` but not `src/api-other.ts`).
-- Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`; in that role the hub must refuse `relay_dispatch` and the Claude Code mod must stay inactive.
+- Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`; in that role the hub must refuse dispatching and changing the relay settings, and the Claude Code mod must stay inactive.
 - Pass secrets only by environment variable name; never write API keys or environment values into job records, logs, events or test fixtures.
 
 ## Verification rules
