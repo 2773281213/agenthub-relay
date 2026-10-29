@@ -50,3 +50,29 @@ test('a copied skill directory runs the relay on its own', () => {
     fs.rmSync(installed, { recursive: true, force: true });
   }
 });
+
+function frontmatter(file) {
+  const text = fs.readFileSync(file, 'utf8');
+  const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
+  assert.ok(match, `${file} starts with frontmatter`);
+  return { fields: Object.fromEntries(match[1].split('\n').map(line => [line.slice(0, line.indexOf(':')), line.slice(line.indexOf(':') + 1).trim()])), body: text.slice(match[0].length) };
+}
+
+test('each skill is named after its folder; the thin entries are explicit-only and find the script', () => {
+  const names = fs.readdirSync(SKILLS).filter(name => fs.existsSync(path.join(SKILLS, name, 'SKILL.md'))).sort();
+  assert.deepEqual(names, ['agenthub-relay', 'relay-config', 'relay-review', 'relay-status']);
+  for (const name of names) {
+    const { fields, body } = frontmatter(path.join(SKILLS, name, 'SKILL.md'));
+    assert.equal(fields.name, name);
+    assert.ok(fields.description.length > 40 && fields.description.length <= 1024, `${name} has a usable description`);
+    if (name === 'agenthub-relay') {
+      assert.equal(fields['disable-model-invocation'], undefined, 'the main skill may be chosen by the model');
+      continue;
+    }
+    assert.equal(fields['disable-model-invocation'], 'true', `${name} runs only when invoked`);
+    assert.match(fields.description, new RegExp(`Use only when the user invokes ${name}`));
+    const script = /node (\.\.\/agenthub-relay\/scripts\/cli\.mjs)/.exec(body)?.[1];
+    assert.ok(script, `${name} names the relay script`);
+    assert.ok(fs.existsSync(path.join(SKILLS, name, script)), `${name}: ${script} exists`);
+  }
+});
