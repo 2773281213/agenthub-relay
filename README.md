@@ -8,7 +8,7 @@ agenthub-relay 是一个**中立的 agent 调度 hub**：规划者通过 MCP 调
 
 ### 来源与核对
 
-思路来自 [linux.do 话题 3028918](https://linux.do/t/topic/3028918) 的可见第 16 楼：用 paseo、bb、lody、t3、Synara 这类工具实现各家 agent 互调；Claude Code 当主调度，复杂任务交给 Codex，简单明确的任务交给 DeepSeek V4 Flash；再写一个 mod，在等待时每 55 分钟保活缓存。
+用 paseo、bb、lody、t3、Synara 这类工具实现各家 agent 互调；Claude Code 当主调度，复杂任务交给 Codex，简单明确的任务交给 DeepSeek V4 Flash；再写一个 mod，在等待时每 55 分钟保活缓存。
 
 这个思路成立，但有三处要修正：
 
