@@ -6,17 +6,6 @@
 
 agenthub-relay 是一个**中立的 agent 调度 hub**：规划者通过 MCP 调用 `relay_*` 工具，把编码任务派给 Codex、Claude Code 或 DeepSeek Harness；每个任务在独立的 git worktree 里执行，规划者看过结果后再决定 apply 或 discard。附带一个 Claude Code mod：Claude Code 当规划者、等待其他 agent 时，每 55 分钟保活一次主会话的提示缓存，任务结束时唤醒会话。
 
-### 来源与核对
-
-用 paseo、bb、lody、t3、Synara 这类工具实现各家 agent 互调；Claude Code 当主调度，复杂任务交给 Codex，简单明确的任务交给 DeepSeek V4 Flash；再写一个 mod，在等待时每 55 分钟保活缓存。
-
-这个思路成立，但有三处要修正：
-
-1. DeepSeek 的官方模型名现在是 `deepseek-flash`，旧名 `deepseek-v4-flash` 仍可用，路由到同一个模型。
-2. 55 分钟保活**只在主会话缓存 TTL 为 1 小时时有效**。订阅额度内默认就是 1 小时；用 API key、超额计费或云厂商时默认 5 分钟，要设 `CLAUDE_CODE_PROMPT_CACHE_TTL=1h`。详见 [docs/cache-keepalive.md](docs/cache-keepalive.md)。
-3. "mods" 是 Claude Code 的真实功能。保活用 `$.model.fork`：它按主会话上一次请求原样读取缓存前缀，不往对话里加轮次。
-
-上面列的那些工具，没有一个能同时覆盖 Claude Code、Codex、DeepSeek Harness 和 Antigravity，并且让规划者和执行者角色互换。所以 v0.1 自建 hub；v0.2 的通用 ACP 执行器会把它们作为可选后端接进来。
 
 ### 工作方式
 
