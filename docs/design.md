@@ -1,6 +1,6 @@
 # agenthub-relay 设计（v0.1，拟实现）
 
-状态：设计稿，模块均未实现。本文是 `.birdview/architecture.json` 引用的证据来源，实现后由源码证据取代。
+状态：v0.1 已实现（2026-10-29）。本文是最初的设计说明，地图第 3 版以它为证据；第 4 版起，地图证据改为源码行号。实现时对设计的调整记录在第 12 节。
 
 ## 1. 背景与目标
 
@@ -107,6 +107,15 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 
 - v0.2：通用 ACP 执行器（Claude 经 `claude-agent-acp`、Codex 经 `codex-acp`、dsh 原生 `--profile acp`、agy 官方 ACP server），之后可把 Paseo、bb、Lody 作为可选后端。
 - Antigravity headless 适配器（`agy -p --output-format json`）。
+
+## 12. 实现与设计的差异（v0.1）
+
+1. MCP 服务内联写在 `.claude-plugin/plugin.json` 的 `mcpServers`，不建根目录 `.mcp.json`：否则用 Claude Code 打开本仓库时，它会被当成项目级 MCP 服务，而 `${CLAUDE_PLUGIN_ROOT}` 在那里无法展开。
+2. 观察者（`relay_status` 的 `watch: true`）记在 MCP 服务进程的内存里，不写盘：从未派发过任务的仓库不会多出 `.agenthub/`，多个规划者共用一个仓库时也不会把别人的观察者当成自己的。
+3. 取消一律经由 worker 完成：发送 SIGTERM，worker 启动时和每次心跳时也会检查取消标记；worker 已不在时，存活检测把任务对账为 cancelled，而不是 worker-lost。
+4. `passEnv` 变量的值在执行者与检查的输出、日志、`final.md` 和存储的补丁里都替换为 `[redacted]`，跨输出块也能识别；执行者把密钥写进仓库文件时，任务会给出警告。
+5. light 档的范围不能是整个仓库（`.`）；已完成但尚未 apply 或 discard 的写任务继续占用它的范围。
+6. 插件选项键名为 `keep_alive`、`interval_minutes`、`ceiling_hours`、`wake_on_finish`；mod 只为本会话盯过（见过正在运行）的任务发唤醒。
 
 ## 来源
 
