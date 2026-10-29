@@ -489,3 +489,43 @@ describe('relay tools (real worker processes)', () => {
     }
   });
 });
+
+describe('redaction of credentials passed by name', () => {
+  test('values are replaced across chunk and multi-byte boundaries', async () => {
+    const { createRedactor, redactText, REDACTED } = await import('../src/checks.mjs');
+    const secret = 'sk-live-0123456789';
+    const r = createRedactor([secret, 'short']);
+    const bytes = Buffer.from(`token=${secret}; é ok ${secret}!`, 'utf8');
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 3) out += r.push(bytes.subarray(i, i + 3));
+    out += r.end();
+    assert.equal(out, `token=${REDACTED}; é ok ${REDACTED}!`);
+    assert.equal(redactText('a short word', ['short']), 'a short word', 'values under 6 characters are left alone');
+  });
+
+  test('an executor that prints a passed credential leaves only [redacted] behind', async () => {
+    const { dir, cleanup } = makeRepo();
+    const value = 'sk-test-value-9f8e7d6c5b4a';
+    process.env.AGENTHUB_LEAKY_TOKEN = value;
+    try {
+      useFakeExecutors(dir, { codex: { passEnv: ['AGENTHUB_LEAKY_TOKEN'] } });
+      const id = await prepareJob(dir, {
+        tier: 'deep',
+        scope: ['src'],
+        checks: ['echo "check sees $AGENTHUB_LEAKY_TOKEN"'],
+        task: fakeTask({ message: 'my token is', echoEnv: 'AGENTHUB_LEAKY_TOKEN' }),
+      });
+      const job = await runWorker({ root: dir, jobId: id });
+      assert.equal(job.status, 'completed');
+      assert.equal(job.summary, 'my token is [redacted]');
+      assert.match(job.checkResults[0].summary, /check sees \[redacted\]/);
+      for (const file of listFiles(path.join(dir, '.agenthub', 'jobs'))) {
+        assert.ok(!fs.readFileSync(file, 'utf8').includes(value), `${path.basename(file)} holds the value`);
+      }
+      assert.match(fs.readFileSync(path.join(dir, '.agenthub/jobs', id, 'executor.log'), 'utf8'), /debug: \[redacted\]/);
+    } finally {
+      delete process.env.AGENTHUB_LEAKY_TOKEN;
+      cleanup();
+    }
+  });
+});

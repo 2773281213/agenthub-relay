@@ -4,19 +4,24 @@
 //
 // Check records follow Birdview's semantics: passed requires exit code 0,
 // failed requires a non-zero exit code, not-run requires a null exit code.
+// Values of credentials passed by name are redacted from logs and output.
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 
 /** The exit code recorded for a command stopped by its timeout. */
 export const TIMEOUT_EXIT_CODE = 124;
 export const KILL_GRACE_MS = 5_000;
+export const REDACTED = '[redacted]';
 
-const MAX_LOG_BYTES = 20 * 1024 * 1024;
-const MAX_STDOUT_BYTES = 16 * 1024 * 1024;
-const MAX_STDERR_BYTES = 1024 * 1024;
+const MAX_LOG_CHARS = 20 * 1024 * 1024;
+const MAX_STDOUT_CHARS = 16 * 1024 * 1024;
+const MAX_STDERR_CHARS = 1024 * 1024;
+/** Shorter values would redact ordinary words. */
+const MIN_SECRET_CHARS = 6;
 
 /** Signals the whole process group led by `pid` (ESRCH means it is gone). */
 export function signalGroup(pid, signal) {
@@ -32,49 +37,84 @@ function signalNumber(signal) {
   return os.constants.signals[signal] ?? 1;
 }
 
+/**
+ * Decodes a byte stream to text with every listed value replaced by
+ * [redacted], including values split across chunks: the text is scrubbed
+ * before it is cut, and the tail that could still start a value is held back.
+ */
+export function createRedactor(values = []) {
+  const secrets = [...new Set(values.filter(value => typeof value === 'string' && value.length >= MIN_SECRET_CHARS))].sort(
+    (a, b) => b.length - a.length,
+  );
+  const decoder = new StringDecoder('utf8');
+  if (secrets.length === 0) return { push: chunk => decoder.write(chunk), end: () => decoder.end() };
+  const scrub = text => secrets.reduce((acc, secret) => acc.split(secret).join(REDACTED), text);
+  const hold = secrets[0].length - 1;
+  let carry = '';
+  return {
+    push(chunk) {
+      const text = scrub(carry + decoder.write(chunk));
+      const cut = Math.max(0, text.length - hold);
+      carry = text.slice(cut);
+      return text.slice(0, cut);
+    },
+    end() {
+      const rest = scrub(carry + decoder.end());
+      carry = '';
+      return rest;
+    },
+  };
+}
+
+/** `text` with every listed value replaced by [redacted]. */
+export function redactText(text, values = []) {
+  const redactor = createRedactor(values);
+  return redactor.push(Buffer.from(text, 'utf8')) + redactor.end();
+}
+
 class Capture {
   constructor(limit) {
     this.limit = limit;
-    this.chunks = [];
+    this.parts = [];
     this.size = 0;
-    this.truncated = false;
   }
 
-  push(chunk) {
-    if (this.size >= this.limit) {
-      this.truncated = true;
-      return;
-    }
-    const room = this.limit - this.size;
-    const piece = chunk.length > room ? chunk.subarray(0, room) : chunk;
-    this.chunks.push(piece);
+  push(text) {
+    if (text === '' || this.size >= this.limit) return;
+    const piece = text.length > this.limit - this.size ? text.slice(0, this.limit - this.size) : text;
+    this.parts.push(piece);
     this.size += piece.length;
-    if (piece.length < chunk.length) this.truncated = true;
   }
 
   text() {
-    return Buffer.concat(this.chunks).toString('utf8');
+    return this.parts.join('');
   }
 }
 
 /**
  * Runs one command in its own process group and resolves when it ends.
  * Never rejects: a command that cannot start resolves with `spawnError`.
+ * Output reaches the log, `stdout` and `stderr` with `redact` values replaced.
  */
-export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, signal }) {
+export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, signal, redact = [] }) {
   return new Promise(resolve => {
     const started = Date.now();
     const log = logFile ? fs.createWriteStream(logFile, { flags: 'a' }) : null;
     let logged = 0;
-    const toLog = chunk => {
-      if (!log) return;
-      if (logged >= MAX_LOG_BYTES) return;
-      logged += chunk.length;
-      log.write(chunk);
-      if (logged >= MAX_LOG_BYTES) log.write('\n[agenthub-relay: log truncated at 20 MB]\n');
+    const toLog = text => {
+      if (!log || text === '' || logged >= MAX_LOG_CHARS) return;
+      logged += text.length;
+      log.write(text);
+      if (logged >= MAX_LOG_CHARS) log.write('\n[agenthub-relay: log truncated at 20 MB]\n');
     };
-    const stdout = new Capture(MAX_STDOUT_BYTES);
-    const stderr = new Capture(MAX_STDERR_BYTES);
+    const stdout = new Capture(MAX_STDOUT_CHARS);
+    const stderr = new Capture(MAX_STDERR_CHARS);
+    const outRedactor = createRedactor(redact);
+    const errRedactor = createRedactor(redact);
+    const take = (capture, text) => {
+      capture.push(text);
+      toLog(text);
+    };
     let timedOut = false;
     let cancelled = false;
     let settled = false;
@@ -88,6 +128,8 @@ export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, s
       clearTimeout(timer);
       clearTimeout(killTimer);
       signal?.removeEventListener('abort', onAbort);
+      take(stdout, outRedactor.end());
+      take(stderr, errRedactor.end());
       const done = () => resolve({ ...result, timedOut, cancelled, durationMs: Date.now() - started, stdout: stdout.text(), stderr: stderr.text() });
       if (log) log.end(done);
       else done();
@@ -126,14 +168,8 @@ export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, s
       else signal.addEventListener('abort', onAbort, { once: true });
     }
 
-    child.stdout.on('data', chunk => {
-      stdout.push(chunk);
-      toLog(chunk);
-    });
-    child.stderr.on('data', chunk => {
-      stderr.push(chunk);
-      toLog(chunk);
-    });
+    child.stdout.on('data', chunk => take(stdout, outRedactor.push(chunk)));
+    child.stderr.on('data', chunk => take(stderr, errRedactor.push(chunk)));
     if (stdin !== null) {
       child.stdin.on('error', () => {}); // the command may exit without reading
       child.stdin.end(stdin);
@@ -170,7 +206,7 @@ export function notRun(commands, reason) {
 }
 
 /** Runs the planner's checks one after another in the job's worktree. */
-export async function runChecks(commands, { cwd, env, timeoutMs, logDir, signal }) {
+export async function runChecks(commands, { cwd, env, timeoutMs, logDir, signal, redact = [] }) {
   const results = [];
   for (const [index, command] of commands.entries()) {
     if (signal?.aborted) {
@@ -178,7 +214,7 @@ export async function runChecks(commands, { cwd, env, timeoutMs, logDir, signal 
       break;
     }
     const logFile = path.join(logDir, `${index}.log`);
-    const run = await runProcess({ argv: ['/bin/sh', '-c', command], cwd, env, timeoutMs, logFile, signal });
+    const run = await runProcess({ argv: ['/bin/sh', '-c', command], cwd, env, timeoutMs, logFile, signal, redact });
     if (run.spawnError) {
       results.push({ command, status: 'failed', exitCode: 127, summary: `could not start: ${run.spawnError.message}`, log: logFile });
       continue;

@@ -27,7 +27,12 @@ async function readStdin() {
 const prompt = mode === 'dsh' ? args[args.length - 1] : await readStdin();
 const match = /^FAKE (\{.*\})$/m.exec(prompt);
 const plan = match ? JSON.parse(match[1]) : {};
-const message = plan.message ?? `fake ${mode} finished`;
+const echoed = plan.echoEnv ? ` ${process.env[plan.echoEnv] ?? ''}` : '';
+const message = `${plan.message ?? `fake ${mode} finished`}${echoed}`;
+if (plan.echoEnv) {
+  // An executor that leaks what it was given, on both streams.
+  process.stderr.write(`debug:${echoed}\n`);
+}
 
 if (plan.record) {
   const names = plan.envNames ?? [];

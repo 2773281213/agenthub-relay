@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { notRun, runChecks, runProcess, verdict } from './checks.mjs';
+import { notRun, redactText, runChecks, runProcess, verdict } from './checks.mjs';
 import { loadConfig } from './config.mjs';
 import { adapterFor, buildPrompt, childEnv } from './executors.mjs';
 import { collectChanges } from './git.mjs';
@@ -94,6 +94,9 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
     const executorConfig = config.executors[job.executor];
     const worktree = path.join(root, job.worktree);
     const { env: executorEnv, passed } = childEnv(env, executorConfig, jobId);
+    // Values of the credentials passed by name: held in memory only, and
+    // replaced by [redacted] wherever executor or check output is kept.
+    const redact = passed.map(name => executorEnv[name]);
     const invocation = adapter.invocation(job, executorConfig, files, buildPrompt(job));
 
     await store.update(jobId, draft => {
@@ -108,9 +111,13 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
       timeoutMs: job.timeoutMinutes * 60_000,
       logFile: files.executorLog,
       signal,
+      redact,
     });
 
-    const finalText = readIfExists(files.final);
+    // An executor may write its final message itself (codex -o): scrub it too.
+    const written = readIfExists(files.final);
+    const finalText = redactText(written, redact);
+    if (finalText !== written) fs.writeFileSync(files.final, finalText);
     const parsed = run.spawnError
       ? { ok: false, summary: '', error: `Could not start ${invocation.argv[0]}: ${run.spawnError.code ?? run.spawnError.message}` }
       : adapter.parse({ exitCode: run.exitCode, stdout: run.stdout, stderr: run.stderr, finalText });
@@ -144,6 +151,7 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
             timeoutMs: config.checks.timeoutMinutes * 60_000,
             logDir: files.checksDir,
             signal,
+            redact,
           })
         : notRun(job.checks, 'not run: the executor did not finish successfully');
       cancelled = signal?.aborted === true;
