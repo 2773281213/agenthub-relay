@@ -1,0 +1,48 @@
+{
+  "name": "agenthub-relay",
+  "displayName": "agenthub-relay",
+  "version": "0.1.0",
+  "description": "Hand coding jobs to Codex, Claude Code or DeepSeek Harness in isolated git worktrees, and keep a waiting Claude Code planner's prompt cache warm.",
+  "author": { "name": "2773281213", "url": "https://github.com/2773281213" },
+  "homepage": "https://github.com/2773281213/agenthub-relay",
+  "repository": "https://github.com/2773281213/agenthub-relay",
+  "license": "MIT",
+  "keywords": ["multi-agent", "codex", "deepseek", "mcp", "prompt-cache", "worktree"],
+  "types": "./types/index.d.ts",
+  "mcpServers": {
+    "relay": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/src/cli.mjs", "mcp"]
+    }
+  },
+  "userConfig": {
+    "keep_alive": {
+      "type": "boolean",
+      "title": "Keep the prompt cache warm",
+      "description": "While relay jobs run and this session is idle, refresh the main conversation's prompt cache with a fork before its one-hour lifetime ends. Needs the one-hour cache TTL.",
+      "default": true
+    },
+    "interval_minutes": {
+      "type": "number",
+      "title": "Keep-alive interval (minutes)",
+      "description": "Refresh the cache this long after the last request or refresh. Must stay below the 60-minute TTL.",
+      "default": 55,
+      "min": 1,
+      "max": 59
+    },
+    "ceiling_hours": {
+      "type": "number",
+      "title": "Keep-alive ceiling (hours)",
+      "description": "Stop refreshing once this long has passed since your last real request.",
+      "default": 8,
+      "min": 1,
+      "max": 48
+    },
+    "wake_on_finish": {
+      "type": "boolean",
+      "title": "Wake the session when a job ends",
+      "description": "When a job this session watched ends and nobody has read its result, start a turn that asks Claude to review it.",
+      "default": true
+    }
+  }
+}

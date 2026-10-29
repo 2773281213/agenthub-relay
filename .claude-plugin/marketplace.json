@@ -1,0 +1,12 @@
+{
+  "name": "agenthub-relay",
+  "description": "agenthub-relay: a planner-neutral hub that dispatches coding jobs across agents, with a Claude Code mod for prompt-cache keep-alive.",
+  "owner": { "name": "2773281213" },
+  "plugins": [
+    {
+      "name": "agenthub-relay",
+      "source": "./",
+      "description": "Hand coding jobs to Codex, Claude Code or DeepSeek Harness in isolated git worktrees, and keep a waiting Claude Code planner's prompt cache warm."
+    }
+  ]
+}
