@@ -31,7 +31,9 @@ agenthub-relay ── 配置（规划者 → profile → 各档位的执行者�
 
 ### 安装
 
-需要 Node.js 20 以上和 git，再加至少一个执行者 CLI（已登录的 `codex`、`claude` 或 `dsh`）。
+需要 Node.js 20 以上和 git，再加至少一个执行者 CLI（已登录的 `codex`、`claude` 或 `dsh`）。支持 Linux、macOS 和 Windows。
+
+Windows 说明：npm、pnpm 装的 `codex.cmd`、`dsh.cmd` 这类外壳会被解析成“node + 脚本”直接启动，任务原样传递；解析不了时 `doctor` 会提示把 `executors.<id>.command` 设成 `.exe` 或 `.js` 的路径。检查命令默认在 cmd.exe 里运行，需要 POSIX 写法时用 `config set checks.shell "C:\Program Files\Git\bin\bash.exe"` 改用 Git Bash。取消和超时会结束整棵进程树（taskkill）。
 
 - **任何规划者（Codex、DeepSeek Harness、Antigravity、Claude Code）**：安装 skill，不用配置 MCP。
   ```
@@ -101,7 +103,7 @@ claude plugin validate . # 插件清单与 hooks 模块
 - 真实的 Codex、dsh 没有在本仓库的测试环境里跑过：适配器按各自官方文档写成，用伪造的二进制做契约测试；codex 的推理强度参数写法来自其 `-c` 配置覆盖方式，未在真实 CLI 上验证。
 - 只有 Claude Code 会遵守 `disable-model-invocation`；其他宿主靠 skill 描述里的“仅在用户调用时使用”。
 - Claude Code 以外的规划者没有保活，用 `wait` 轮询。
-- 范围声明和越界审计是事后核对，不是文件系统写锁；不支持 Windows。
+- 范围声明和越界审计是事后核对，不是文件系统写锁。
 - `$.model.fork` 是否会重置 Claude Code 的空闲压缩计时尚无文档，mod 会记录压缩事件，`/relay` 可以查看。
 
 ## English
@@ -118,7 +120,7 @@ From the visible 16th reply of [linux.do topic 3028918](https://linux.do/t/topic
 
 ### Install
 
-Node.js 20 or newer, git, and at least one signed-in executor CLI (`codex`, `claude` or `dsh`).
+Node.js 20 or newer, git, and at least one signed-in executor CLI (`codex`, `claude` or `dsh`). Linux, macOS and Windows are supported. On Windows, npm and pnpm shims such as `codex.cmd` are resolved to node plus the script they wrap, so tasks pass verbatim (`doctor` says when a shim cannot be read; then set `executors.<id>.command` to the `.exe` or `.js` file); checks run in cmd.exe unless `checks.shell` names another shell, such as Git Bash; cancels and timeouts end the whole process tree with taskkill.
 
 - **Any planner (Codex, DeepSeek Harness, Antigravity, Claude Code)**: install the skill; no MCP setup is needed. `npx skills add 2773281213/agenthub-relay --skill agenthub-relay`, or copy the whole `skills/agenthub-relay` folder to where your planner reads skills: `~/.agents/skills` for Codex and Antigravity, `~/.dsh/skills` or `~/.agents/skills` for DeepSeek Harness (one copy only, to avoid duplicate names), `~/.claude/skills` for Claude Code. The explicit-only entries `relay-review`, `relay-status` and `relay-config` sit next to it in `skills/`.
 - **Claude Code plugin** (the four skills, the MCP server, the keep-alive mod and `/relay`): `/plugin install agenthub-relay --marketplace 2773281213/agenthub-relay` at the prompt, or `claude plugin install agenthub-relay --marketplace 2773281213/agenthub-relay` from a shell.
@@ -139,7 +141,7 @@ Follow the [routing skill](skills/agenthub-relay/SKILL.md): `config show`, then 
 
 ### Limitations
 
-Real Codex and dsh runs are not part of the test suite: their adapters follow each CLI's documentation and are contract-tested against a fake executor, and codex's effort flag follows its `-c` configuration override without a real run. Only Claude Code honors `disable-model-invocation`. Planners other than Claude Code have no keep-alive and poll with `wait`. Scope declarations and the out-of-scope audit are checks after the fact, not filesystem locks. Windows is not supported. Whether a fork resets Claude Code's idle-compaction timer is undocumented; the mod records compactions and `/relay` shows them.
+Real Codex and dsh runs are not part of the test suite: their adapters follow each CLI's documentation and are contract-tested against a fake executor, and codex's effort flag follows its `-c` configuration override without a real run. Only Claude Code honors `disable-model-invocation`. Planners other than Claude Code have no keep-alive and poll with `wait`. Scope declarations and the out-of-scope audit are checks after the fact, not filesystem locks. Whether a fork resets Claude Code's idle-compaction timer is undocumented; the mod records compactions and `/relay` shows them.
 
 ## License
 

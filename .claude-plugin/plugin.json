@@ -1,7 +1,7 @@
 {
   "name": "agenthub-relay",
   "displayName": "agenthub-relay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Hand coding jobs to Codex, Claude Code or DeepSeek Harness in isolated git worktrees, and keep a waiting Claude Code planner's prompt cache warm.",
   "author": { "name": "2773281213", "url": "https://github.com/2773281213" },
   "homepage": "https://github.com/2773281213/agenthub-relay",

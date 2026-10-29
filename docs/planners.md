@@ -51,6 +51,12 @@ Without `--user` these go to the repository's `.agenthub/config.json`; with `--u
 
 The planner's own model is set in the planner's host, not here.
 
+## Windows
+
+The relay runs on Windows as well. `doctor` shows how each executor starts: `direct` for an `.exe`, `shim-node` when an npm or pnpm `.cmd` shim is resolved to node plus the script it wraps (so a multi-line task reaches the program verbatim, never through cmd.exe), `shim-exe` when a shim wraps an `.exe`. A shim it cannot read is reported as unusable; set `executors.<id>.command` to the `.exe` or `.js` file instead. Checks run in cmd.exe by default; `config set checks.shell "C:\Program Files\Git\bin\bash.exe"` runs them in Git Bash. Cancels and timeouts end the executor's whole process tree with `taskkill /T /F`.
+
+Windows 上同样可用：`doctor` 会显示每个执行者的启动方式；npm、pnpm 的 `.cmd` 外壳被解析为“node + 脚本”直接启动；检查默认走 cmd.exe，可用 `checks.shell` 改成 Git Bash；取消与超时用 taskkill 结束整棵进程树。
+
 ## 3. Waiting
 
 From the command line, `wait` returns when a job ends or after `--timeout` seconds (50 by default, at most 3600; keep it under your shell tool's own timeout). Only Claude Code has the keep-alive mod; other planners poll with `wait`.

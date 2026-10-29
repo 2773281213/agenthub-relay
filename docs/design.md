@@ -129,6 +129,17 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 6. **入口**：`relay-review`、`relay-status`、`relay-config` 三个只能显式调用的薄入口，共用同一脚本；Birdview 启用时 relay-status 只 apply 已确认计划内的任务。
 7. 规划者自身的模型由宿主决定，不在本项目范围内。
 
+## 14. Windows 支持
+
+平台差异集中在 `src/platform.mjs`，其余模块只调用它：
+
+1. **找命令与启动**：`resolveCommand` 按 PATH 与 PATHEXT 查找；`.exe` 直接启动；npm/pnpm 的 `.cmd` 外壳读出它包装的脚本，改为 node 加脚本启动，不经 cmd.exe，因此多行任务、引号和 `%` 都原样传递；读不出的外壳以 `windows-shim-unsupported` 失败关闭。
+2. **结束进程树**：POSIX 用进程组；Windows 没有进程组，用 `taskkill /pid <pid> /T /F`。子进程以 `windowsHide` 启动，不弹控制台窗口。命令退出后若遗留进程仍占着管道，最多再等 2 秒就收尾。
+3. **取消**：worker 每秒读一次取消标记（各平台一致）；Windows 上 `relay_cancel` 不发信号，否则 worker 会先被结束，来不及结束执行者的进程树。
+4. **检查**：用 Node 的 `shell` 选项，POSIX 为 /bin/sh，Windows 为 cmd.exe，可用 `checks.shell` 指定其他 shell。
+5. **环境变量白名单**补上 Windows 程序需要的变量（SystemRoot、USERPROFILE、APPDATA、TEMP 等），各家 CLI 的登录信息在用户目录下。
+6. **原子写**：Windows 在别的进程打开目标文件时会短暂拒绝 rename，写入重试约 1 秒。
+
 ## 来源
 
 - [linux.do 话题 3028918](https://linux.do/t/topic/3028918)
