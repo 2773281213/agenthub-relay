@@ -51,6 +51,11 @@ for (const [file, content] of Object.entries(plan.write ?? {})) {
   fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
   fs.writeFileSync(file, content);
 }
+for (const [file, name] of Object.entries(plan.writeEnv ?? {})) {
+  // An executor that writes what it was given into the repository.
+  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  fs.writeFileSync(file, `KEY=${process.env[name] ?? ''}\n`);
+}
 for (const file of plan.remove ?? []) fs.rmSync(file, { force: true });
 
 if (plan.spawnChild) {

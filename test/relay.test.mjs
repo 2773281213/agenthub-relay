@@ -513,7 +513,7 @@ describe('redaction of credentials passed by name', () => {
         tier: 'deep',
         scope: ['src'],
         checks: ['echo "check sees $AGENTHUB_LEAKY_TOKEN"'],
-        task: fakeTask({ message: 'my token is', echoEnv: 'AGENTHUB_LEAKY_TOKEN' }),
+        task: fakeTask({ message: 'my token is', echoEnv: 'AGENTHUB_LEAKY_TOKEN', writeEnv: { 'src/key.env': 'AGENTHUB_LEAKY_TOKEN' } }),
       });
       const job = await runWorker({ root: dir, jobId: id });
       assert.equal(job.status, 'completed');
@@ -523,6 +523,8 @@ describe('redaction of credentials passed by name', () => {
         assert.ok(!fs.readFileSync(file, 'utf8').includes(value), `${path.basename(file)} holds the value`);
       }
       assert.match(fs.readFileSync(path.join(dir, '.agenthub/jobs', id, 'executor.log'), 'utf8'), /debug: \[redacted\]/);
+      assert.match(fs.readFileSync(path.join(dir, '.agenthub/jobs', id, 'patch.diff'), 'utf8'), /\+KEY=\[redacted\]/);
+      assert.ok(job.warnings.some(w => /credential passed by name into its changes/.test(w)));
     } finally {
       delete process.env.AGENTHUB_LEAKY_TOKEN;
       cleanup();

@@ -161,9 +161,15 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
 
     // The audit runs whatever happened, so the planner sees what was touched.
     const changes = await collectChanges(worktree, job.base.commit);
-    fs.writeFileSync(files.patch, changes.patch);
+    const patch = redactText(changes.patch, redact);
+    fs.writeFileSync(files.patch, patch);
     const strays = job.write ? outOfScope(changes.files, job.scope) : changes.files;
     const warnings = [...(job.warnings ?? [])];
+    if (patch !== changes.patch) {
+      warnings.push(
+        'The executor wrote the value of a credential passed by name into its changes. The stored patch has [redacted] in its place, so applying it writes [redacted]; review those files.',
+      );
+    }
     if (job.tier === 'light' && changes.files.length > config.light.maxChangedFiles) {
       warnings.push(`A light job changed ${changes.files.length} files (more than ${config.light.maxChangedFiles}).`);
     }
