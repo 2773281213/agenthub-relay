@@ -2,16 +2,13 @@
   "schema": "birdview.constraint-catalog/v1",
   "project": {
     "name": "agenthub-relay",
-    "revision": "60e950b3c6f46c381c0a9bd84e1edf30a59c2df0"
+    "revision": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
   },
   "coverage": {
-    "checkedAt": "2026-10-29T12:25:05.404Z",
+    "checkedAt": "2026-10-29T12:25:26.494Z",
     "snapshot": "committed-HEAD",
     "shallow": false,
     "entries": [
-      ".birdview/proposals/skill-packaging/drafts/agenthub-relay/SKILL.md",
-      ".birdview/proposals/skill-packaging/drafts/relay-review/SKILL.md",
-      ".birdview/proposals/skill-packaging/drafts/relay-status/SKILL.md",
       "AGENTS.md",
       "CLAUDE.md",
       "skills/agenthub-relay/SKILL.md",
@@ -20,9 +17,6 @@
       "skills/relay-status/SKILL.md"
     ],
     "checkedPaths": [
-      ".birdview/proposals/skill-packaging/drafts/agenthub-relay/SKILL.md",
-      ".birdview/proposals/skill-packaging/drafts/relay-review/SKILL.md",
-      ".birdview/proposals/skill-packaging/drafts/relay-status/SKILL.md",
       "AGENTS.md",
       "CLAUDE.md",
       "skills/agenthub-relay/SKILL.md",
@@ -61,97 +55,6 @@
     }
   ],
   "sources": [
-    {
-      "id": "source-9bb160a451ea1fe5",
-      "path": ".birdview/proposals/skill-packaging/drafts/agenthub-relay/SKILL.md",
-      "kind": "skill",
-      "scope": null,
-      "discoveredFrom": null,
-      "applicability": "unreviewed",
-      "text": "---\nname: agenthub-relay\ndescription: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) with the bundled relay script - split the work, pick a tier, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.\n---\n\n# agenthub-relay: delegating to other agents (DRAFT for evaluation)\n\nYou are the planner. Executors run in their own git worktrees; your working tree changes only when you run `apply`. Run the bundled script with Node.js 20 or newer: `node <skill-root>/scripts/relay.mjs <command>`. If the relay_* MCP tools are loaded, they do the same thing; use either.\n\nDo not delegate when you are yourself an executor (`AGENTHUB_RELAY_ROLE=executor`; `dispatch` refuses), when you cannot state the task precisely, or when explaining it costs more than doing it.\n\n## Commands\n\n- `dispatch --tier deep|light|review --scope <path>... --check <cmd>... --task-file <file>`: start a job; prints its id as JSON.\n- `wait <id> [--timeout <seconds>]`, `result <id>`, `apply <id>`, `discard <id>`, `cancel <id>`, `status`.\n\n## With Birdview\n\nWhen Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation.",
-      "sections": [
-        {
-          "id": "source-9bb160a451ea1fe5-s1",
-          "title": "agenthub-relay: delegating to other agents (DRAFT for evaluation)",
-          "level": 1,
-          "line": 6,
-          "endLine": 11,
-          "text": "# agenthub-relay: delegating to other agents (DRAFT for evaluation)\n\nYou are the planner. Executors run in their own git worktrees; your working tree changes only when you run `apply`. Run the bundled script with Node.js 20 or newer: `node <skill-root>/scripts/relay.mjs <command>`. If the relay_* MCP tools are loaded, they do the same thing; use either.\n\nDo not delegate when you are yourself an executor (`AGENTHUB_RELAY_ROLE=executor`; `dispatch` refuses), when you cannot state the task precisely, or when explaining it costs more than doing it.\n"
-        },
-        {
-          "id": "source-9bb160a451ea1fe5-s2",
-          "title": "Commands",
-          "level": 2,
-          "line": 12,
-          "endLine": 16,
-          "text": "## Commands\n\n- `dispatch --tier deep|light|review --scope <path>... --check <cmd>... --task-file <file>`: start a job; prints its id as JSON.\n- `wait <id> [--timeout <seconds>]`, `result <id>`, `apply <id>`, `discard <id>`, `cancel <id>`, `status`.\n"
-        },
-        {
-          "id": "source-9bb160a451ea1fe5-s3",
-          "title": "With Birdview",
-          "level": 2,
-          "line": 17,
-          "endLine": 19,
-          "text": "## With Birdview\n\nWhen Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation."
-        }
-      ],
-      "history": {
-        "complete": true,
-        "version": 1,
-        "lastEdited": "2026-10-29T16:54:41+08:00",
-        "commit": "c0c8c8c4b7387bd5da1f753d9527cc0784dcc9cf"
-      }
-    },
-    {
-      "id": "source-ecc4ed0d8e5899fb",
-      "path": ".birdview/proposals/skill-packaging/drafts/relay-review/SKILL.md",
-      "kind": "skill",
-      "scope": null,
-      "discoveredFrom": null,
-      "applicability": "unreviewed",
-      "text": "---\nname: relay-review\ndescription: Ask another agent (Codex, Claude Code or DeepSeek Harness) for a read-only second opinion on a diff, a bug or a design through agenthub-relay. Use only when the user invokes relay-review; it never changes files and does not review architecture.\ndisable-model-invocation: true\n---\n\n# relay-review (DRAFT for evaluation)\n\nThis thin entry requires the agenthub-relay skill in the sibling ../agenthub-relay directory. Dispatch one `review` tier job with `node ../agenthub-relay/scripts/relay.mjs dispatch --tier review`, wait for it, and report its findings next to your own. A review job is read-only: any change it makes is reported out of scope and is never applied.\n\nWhen the user asks for an architecture review, birdview-review owns the report; offer this second opinion as an input to that one review instead of producing a separate report.",
-      "sections": [
-        {
-          "id": "source-ecc4ed0d8e5899fb-s1",
-          "title": "relay-review (DRAFT for evaluation)",
-          "level": 1,
-          "line": 7,
-          "endLine": 11,
-          "text": "# relay-review (DRAFT for evaluation)\n\nThis thin entry requires the agenthub-relay skill in the sibling ../agenthub-relay directory. Dispatch one `review` tier job with `node ../agenthub-relay/scripts/relay.mjs dispatch --tier review`, wait for it, and report its findings next to your own. A review job is read-only: any change it makes is reported out of scope and is never applied.\n\nWhen the user asks for an architecture review, birdview-review owns the report; offer this second opinion as an input to that one review instead of producing a separate report."
-        }
-      ],
-      "history": {
-        "complete": true,
-        "version": 1,
-        "lastEdited": "2026-10-29T16:54:41+08:00",
-        "commit": "c0c8c8c4b7387bd5da1f753d9527cc0784dcc9cf"
-      }
-    },
-    {
-      "id": "source-40f8d4fd7b5cea2e",
-      "path": ".birdview/proposals/skill-packaging/drafts/relay-status/SKILL.md",
-      "kind": "skill",
-      "scope": null,
-      "discoveredFrom": null,
-      "applicability": "unreviewed",
-      "text": "---\nname: relay-status\ndescription: Show agenthub-relay jobs in this repository and help decide whether to apply, discard or cancel each one. Use only when the user invokes relay-status.\ndisable-model-invocation: true\n---\n\n# relay-status (DRAFT for evaluation)\n\nThis thin entry requires the agenthub-relay skill in the sibling ../agenthub-relay directory. Run `node ../agenthub-relay/scripts/relay.mjs status`, then `result <id>` for finished jobs. Recommend apply or discard with reasons, and run `apply`, `discard` or `cancel` only after the user says which.",
-      "sections": [
-        {
-          "id": "source-40f8d4fd7b5cea2e-s1",
-          "title": "relay-status (DRAFT for evaluation)",
-          "level": 1,
-          "line": 7,
-          "endLine": 9,
-          "text": "# relay-status (DRAFT for evaluation)\n\nThis thin entry requires the agenthub-relay skill in the sibling ../agenthub-relay directory. Run `node ../agenthub-relay/scripts/relay.mjs status`, then `result <id>` for finished jobs. Recommend apply or discard with reasons, and run `apply`, `discard` or `cancel` only after the user says which."
-        }
-      ],
-      "history": {
-        "complete": true,
-        "version": 1,
-        "lastEdited": "2026-10-29T16:54:41+08:00",
-        "commit": "c0c8c8c4b7387bd5da1f753d9527cc0784dcc9cf"
-      }
-    },
     {
       "id": "source-a54ff182c7e8acf5",
       "path": "AGENTS.md",

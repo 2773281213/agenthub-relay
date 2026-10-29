@@ -1,10 +1,10 @@
 {
- "revision": "60e950b3c6f46c381c0a9bd84e1edf30a59c2df0",
- "scope": "已审阅 AGENTS.md 全部 12 条规则、CLAUDE.md，以及四个 skill 中只在规划者派发、查看任务或修改设置时适用的 6 条条件规则；docs/design.md 是设计说明，不单独提炼规则。",
+ "revision": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7",
+ "scope": "已审阅 AGENTS.md 全部 12 条规则、CLAUDE.md，以及四个 skill 中只在规划者派发、查看任务或修改设置时适用的 7 条条件规则；docs/design.md 是设计说明，不单独提炼规则。收集器报告的唯一未解析引用是 docs/design.md 第 12 节提到的 final.md：它是任务目录 .agenthub/jobs/<id>/ 里的运行时文件，不是文档，不影响规则审阅。",
  "architectureBinding": {
   "mapId": "agenthub-relay-system",
   "mapRevision": 6,
-  "sourceRevision": "60e950b3c6f46c381c0a9bd84e1edf30a59c2df0"
+  "sourceRevision": "822bdfd0d06d4d1e8dacd20ec4892c86e72d87d7"
  },
  "groups": [
   {
@@ -79,7 +79,10 @@
      "applicability": "applicable",
      "modules": [
       "relay-skill"
-     ]
+     ],
+     "condition": "修改 src/ 或发布 skill 时",
+     "targetRole": "generic",
+     "roleReason": "规则约束的对象是 skill 目录里的生成副本。"
     }
    ]
   },
