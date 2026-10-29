@@ -2,7 +2,7 @@
 // concurrent write jobs, reserved executors and the executor role.
 // Every decision here is a pure function of its inputs.
 
-import { RESERVED, TIERS, WRITE_TIERS } from './config.mjs';
+import { MODEL_NAME, RESERVED, TIERS, WRITE_TIERS } from './config.mjs';
 
 export const MAX_TASK_CHARS = 100_000;
 export const MAX_CHECKS = 20;
@@ -92,6 +92,40 @@ function cleanList(value, field) {
   return value;
 }
 
+function cleanName(value, field) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string' || !MODEL_NAME.test(value)) {
+    throw new PolicyError('invalid-request', `${field} must be a name of letters, digits and . _ : / @ + - (at most 100 characters)`);
+  }
+  return value;
+}
+
+/**
+ * The model and effort a job runs with: the request's, else the tier route's
+ * (only when the route's executor is the one running), else the executor's
+ * default. An executor without a flag for one of them refuses it.
+ */
+function selectModel({ request, route, executor, executorConfig }) {
+  const fromRoute = route?.executor === executor ? route : {};
+  const model = cleanName(request.model, 'model') ?? fromRoute.model ?? executorConfig.model;
+  const effort = cleanName(request.effort, 'effort') ?? fromRoute.effort ?? executorConfig.effort;
+  if (model !== undefined && !executorConfig.modelArgs?.length) {
+    throw new PolicyError(
+      'model-unsupported',
+      `The ${executor} executor has no documented flag for choosing a model; set its model in ${executor}'s own settings, or configure executors.${executor}.modelArgs`,
+      { executor, model },
+    );
+  }
+  if (effort !== undefined && !executorConfig.effortArgs?.length) {
+    throw new PolicyError(
+      'effort-unsupported',
+      `The ${executor} executor has no flag for reasoning effort; configure executors.${executor}.effortArgs to use one`,
+      { executor, effort },
+    );
+  }
+  return { model, effort };
+}
+
 function defaultTitle(task) {
   const line = task.split('\n').find(text => text.trim() !== '') ?? task;
   const title = line.trim();
@@ -126,7 +160,8 @@ export function planDispatch({ request, config, jobs = [], role }) {
   }
   const write = WRITE_TIERS.has(tier);
 
-  const executor = request.executor ?? config.mapping[tier];
+  const route = config.routes?.[tier];
+  const executor = request.executor ?? route?.executor ?? config.mapping[tier];
   if (RESERVED[executor]) {
     throw new PolicyError('reserved-executor', RESERVED[executor], { executor });
   }
@@ -181,6 +216,8 @@ export function planDispatch({ request, config, jobs = [], role }) {
     }
   }
 
+  const { model, effort } = selectModel({ request, route, executor, executorConfig: config.executors[executor] });
+
   let timeoutMinutes = config.executors[executor].timeoutMinutes;
   if (request.timeoutMinutes !== undefined) {
     const value = request.timeoutMinutes;
@@ -195,6 +232,8 @@ export function planDispatch({ request, config, jobs = [], role }) {
     tier,
     write,
     executor,
+    ...(model !== undefined ? { model } : {}),
+    ...(effort !== undefined ? { effort } : {}),
     scope: effectiveScope,
     checks,
     title: cleanText(request.title, 'title', MAX_TITLE_CHARS) ?? defaultTitle(task),
