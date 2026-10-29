@@ -28,8 +28,6 @@ export const HEARTBEAT_MS = 30_000;
 export const LOST_AFTER_MS = 90_000;
 /** A heartbeat this old means the worker is lost even if its pid is reused. */
 export const STALLED_AFTER_MS = 5 * 60_000;
-/** A watcher counts as active while it was seen this recently. */
-export const WATCHER_ACTIVE_MS = 3 * 60_000;
 
 const STALE_LOCK_MS = 30_000;
 const LOCK_WAIT_MS = 15_000;
@@ -132,6 +130,8 @@ export function checkTransition(prev, next) {
 /** True when a live job's worker has gone away. */
 export function isLost(job, now = Date.now()) {
   if (TERMINAL.has(job.status)) return false;
+  // A cancel whose worker is gone needs no grace period.
+  if (job.cancelRequested && !isAlive(job.worker?.pid)) return true;
   const last = Date.parse(job.heartbeatAt ?? job.createdAt);
   const age = now - (Number.isFinite(last) ? last : 0);
   if (age <= LOST_AFTER_MS) return false;
@@ -224,15 +224,23 @@ export function createStore(root) {
     });
   }
 
-  /** Marks a live job whose worker vanished as failed (worker-lost). */
+  /**
+   * Ends a live job whose worker vanished: cancelled when a cancel was
+   * requested, otherwise failed (worker-lost).
+   */
   async function reconcile(job, now = Date.now()) {
     if (!isLost(job, now)) return job;
     try {
       return await update(job.id, draft => {
         if (!isLost(draft, now)) return draft;
-        draft.status = 'failed';
         draft.endedAt = new Date(now).toISOString();
-        draft.error = { code: 'worker-lost', message: 'The worker process stopped without finishing the job.' };
+        if (draft.cancelRequested) {
+          draft.status = 'cancelled';
+          draft.error = { code: 'cancelled', message: 'The job was cancelled.' };
+        } else {
+          draft.status = 'failed';
+          draft.error = { code: 'worker-lost', message: 'The worker process stopped without finishing the job.' };
+        }
         return draft;
       });
     } catch (err) {
@@ -246,22 +254,5 @@ export function createStore(root) {
     return withLock(path.join(dir, 'dispatch.lock'), fn);
   }
 
-  function recordWatcher(client) {
-    fs.mkdirSync(dir, { recursive: true });
-    const record = { seenAt: new Date().toISOString(), client: String(client ?? 'unknown').slice(0, 200) };
-    writeJsonAtomic(path.join(dir, 'watcher.json'), record);
-    return record;
-  }
-
-  function watcher(now = Date.now()) {
-    try {
-      const record = readJson(path.join(dir, 'watcher.json'));
-      const seen = Date.parse(record.seenAt);
-      return { active: Number.isFinite(seen) && now - seen <= WATCHER_ACTIVE_MS, lastSeenAt: record.seenAt, client: record.client };
-    } catch {
-      return { active: false };
-    }
-  }
-
-  return { root, dir, jobsDir, paths, create, read, list, update, reconcile, appendEvent, withDispatchLock, recordWatcher, watcher };
+  return { root, dir, jobsDir, paths, create, read, list, update, reconcile, appendEvent, withDispatchLock };
 }

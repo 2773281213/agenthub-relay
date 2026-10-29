@@ -17,6 +17,7 @@ import {
 } from '../src/git.mjs';
 import { planDispatch } from '../src/policy.mjs';
 import { createStore, isAlive, newJobId } from '../src/store.mjs';
+import { createRelay } from '../src/tools.mjs';
 import { runWorker } from '../src/worker.mjs';
 import { fakeTask, git, listFiles, makeRepo, sleep, tempDir, useFakeExecutors, waitFor } from './helpers.mjs';
 
@@ -308,6 +309,181 @@ describe('worker', () => {
       assert.equal(job.verification, 'unverified');
       assert.deepEqual(job.outOfScope, ['src/app.txt']);
       assert.ok(job.warnings.some(w => /read-only review changed files/.test(w)));
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+/** A relay for `dir` with an environment that names the repository explicitly. */
+function relayFor(dir, extraEnv = {}) {
+  const env = { ...process.env, AGENTHUB_RELAY_ROOT: dir, ...extraEnv };
+  delete env.CLAUDE_PROJECT_DIR;
+  return createRelay({ cwd: dir, env, clientName: () => 'test-planner' });
+}
+
+async function waitDone(relay, jobId) {
+  return waitFor(async () => {
+    const { job } = await relay.call('relay_status', { jobId });
+    return ['completed', 'failed', 'cancelled'].includes(job.status) ? job : undefined;
+  }, { timeoutMs: 30_000, what: `job ${jobId}` });
+}
+
+describe('relay tools (real worker processes)', () => {
+  test('dispatch, wait, result and apply: the main tree changes only on apply', async () => {
+    const { dir, cleanup } = makeRepo();
+    try {
+      useFakeExecutors(dir);
+      const relay = relayFor(dir);
+      const agents = await relay.call('relay_agents', {});
+      assert.equal(agents.profile, 'thread16');
+      assert.deepEqual(agents.mapping, { deep: 'codex', light: 'dsh', review: 'claude' });
+
+      const dispatched = await relay.call('relay_dispatch', {
+        tier: 'deep',
+        scope: ['src'],
+        checks: ['test -f src/new.txt'],
+        task: fakeTask({ write: { 'src/new.txt': 'from codex\n' }, message: 'wrote src/new.txt' }, 'Add src/new.txt.'),
+      });
+      assert.equal(dispatched.executor, 'codex');
+      assert.equal(dispatched.watcher.active, false);
+      assert.equal(dispatched.worktree, `.agenthub/worktrees/${dispatched.jobId}`);
+
+      const waited = await waitFor(async () => {
+        const w = await relay.call('relay_wait', { timeoutSeconds: 5 });
+        return w.finished.length ? w : undefined;
+      }, { timeoutMs: 30_000, what: 'relay_wait' });
+      assert.equal(waited.finished[0].id, dispatched.jobId);
+      assert.equal(fs.existsSync(path.join(dir, 'src/new.txt')), false);
+
+      const result = await relay.call('relay_result', { jobId: dispatched.jobId });
+      assert.equal(result.status, 'completed');
+      assert.equal(result.verification, 'passed');
+      assert.equal(result.summary, 'wrote src/new.txt');
+      assert.deepEqual(result.changedFiles, ['src/new.txt']);
+      assert.deepEqual(result.outOfScope, []);
+      assert.deepEqual(result.checks.map(c => c.status), ['passed']);
+      assert.equal(result.logs.patch, `.agenthub/jobs/${dispatched.jobId}/patch.diff`);
+      assert.equal((await relay.call('relay_status', { jobId: dispatched.jobId })).job.resultFetched, true);
+
+      const applied = await relay.call('relay_apply', { jobId: dispatched.jobId });
+      assert.equal(applied.applied, true);
+      assert.equal(fs.readFileSync(path.join(dir, 'src/new.txt'), 'utf8'), 'from codex\n');
+      assert.equal(fs.existsSync(path.join(dir, dispatched.worktree)), false);
+      await assert.rejects(relay.call('relay_apply', { jobId: dispatched.jobId }), err => err.code === 'already-integrated');
+      assert.equal(git(dir, 'status', '--porcelain'), '?? src/new.txt');
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('apply guards: out-of-scope files, failed jobs and read-only reviews', async () => {
+    const { dir, cleanup } = makeRepo();
+    try {
+      useFakeExecutors(dir);
+      const relay = relayFor(dir);
+      const stray = await relay.call('relay_dispatch', {
+        tier: 'deep',
+        scope: ['src/api'],
+        task: fakeTask({ write: { 'src/api/y.txt': 'y\n', 'README.md': '# changed\n' } }),
+      });
+      const failed = await relay.call('relay_dispatch', {
+        tier: 'light',
+        scope: ['docs/a.md'],
+        checks: ['false'],
+        task: fakeTask({ write: { 'docs/a.md': 'a\n' } }),
+      });
+      const review = await relay.call('relay_dispatch', { tier: 'review', task: fakeTask({ message: 'looks fine' }) });
+      for (const { jobId } of [stray, failed, review]) await waitDone(relay, jobId);
+
+      await assert.rejects(relay.call('relay_apply', { jobId: stray.jobId }), err => err.code === 'out-of-scope' && /README\.md/.test(err.message));
+      assert.equal((await relay.call('relay_apply', { jobId: stray.jobId, allowOutOfScope: true })).applied, true);
+      assert.equal(fs.readFileSync(path.join(dir, 'README.md'), 'utf8'), '# changed\n');
+
+      assert.equal((await relay.call('relay_status', { jobId: failed.jobId })).job.status, 'failed');
+      await assert.rejects(relay.call('relay_apply', { jobId: failed.jobId }), err => err.code === 'job-not-completed');
+      assert.equal((await relay.call('relay_discard', { jobId: failed.jobId })).discarded, true);
+      assert.equal(fs.existsSync(path.join(dir, '.agenthub/worktrees', failed.jobId)), false);
+      assert.equal(git(dir, 'branch', '--list', `agenthub/${failed.jobId}`), '');
+
+      assert.equal((await relay.call('relay_result', { jobId: review.jobId })).summary, 'looks fine');
+      await assert.rejects(relay.call('relay_apply', { jobId: review.jobId }), err => err.code === 'read-only-job');
+      const listed = await relay.call('relay_status', {});
+      assert.ok(!listed.jobs.some(job => job.id === failed.jobId), 'discarded jobs are hidden');
+      assert.ok((await relay.call('relay_status', { all: true })).jobs.some(job => job.id === failed.jobId));
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('guards at dispatch: scope conflicts, light without checks, reserved executors, the executor role', async () => {
+    const { dir, cleanup } = makeRepo();
+    try {
+      useFakeExecutors(dir);
+      fs.writeFileSync(path.join(dir, 'scratch.txt'), 'untracked\n');
+      const relay = relayFor(dir);
+      const long = await relay.call('relay_dispatch', { tier: 'deep', scope: ['src'], task: fakeTask({ sleepMs: 60_000 }) });
+      assert.ok(long.warnings.some(w => /untracked file\(s\).*scratch\.txt/.test(w)));
+      await assert.rejects(
+        relay.call('relay_dispatch', { tier: 'deep', scope: ['src/api'], task: 'x' }),
+        err => err.code === 'scope-conflict' && err.details.job === long.jobId,
+      );
+      await assert.rejects(relay.call('relay_dispatch', { tier: 'light', scope: ['docs/x.md'], task: 'x' }), err => err.code === 'light-needs-checks');
+      await assert.rejects(relay.call('relay_dispatch', { tier: 'review', executor: 'agy', task: 'x' }), err => err.code === 'reserved-executor');
+      const worktrees = fs.readdirSync(path.join(dir, '.agenthub/worktrees'));
+      assert.deepEqual(worktrees, [long.jobId], 'refused dispatches create no worktree');
+
+      const asExecutor = relayFor(dir, { AGENTHUB_RELAY_ROLE: 'executor' });
+      await assert.rejects(asExecutor.call('relay_dispatch', { tier: 'review', task: 'x' }), err => err.code === 'executor-role');
+
+      await assert.rejects(relay.call('relay_discard', { jobId: long.jobId }), err => err.code === 'job-running');
+      const cancel = await relay.call('relay_cancel', { jobId: long.jobId });
+      assert.equal(cancel.cancelling, true);
+      const ended = await waitDone(relay, long.jobId);
+      assert.equal(ended.status, 'cancelled');
+      await assert.rejects(relay.call('relay_cancel', { jobId: long.jobId }), err => err.code === 'job-finished');
+      // A cancelled job no longer holds its scope.
+      await relay.call('relay_discard', { jobId: long.jobId });
+      const next = await relay.call('relay_dispatch', { tier: 'deep', scope: ['src/api'], task: fakeTask({}) });
+      await waitDone(relay, next.jobId);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('a planner-side watcher polling relay_status is reported to the planner', async () => {
+    const { dir, cleanup } = makeRepo();
+    try {
+      useFakeExecutors(dir);
+      const relay = relayFor(dir);
+      assert.equal((await relay.call('relay_status', {})).watcher.active, false);
+      await relay.call('relay_status', { watch: true });
+      const dispatched = await relay.call('relay_dispatch', { tier: 'review', task: fakeTask({}) });
+      assert.equal(dispatched.watcher.active, true);
+      await waitDone(relay, dispatched.jobId);
+      // Another planner session has its own watcher state.
+      assert.equal((await relayFor(dir).call('relay_status', {})).watcher.active, false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('tool input is validated', async () => {
+    const { dir, cleanup } = makeRepo();
+    try {
+      const relay = relayFor(dir);
+      await assert.rejects(relay.call('relay_nope', {}), err => err.code === 'unknown-tool');
+      await assert.rejects(relay.call('relay_result', { jobId: '../../etc/passwd' }), err => err.code === 'unknown-job');
+      await assert.rejects(relay.call('relay_wait', { jobIds: ['nope'] }), err => err.code === 'invalid-request');
+      assert.deepEqual(await relay.call('relay_wait', {}), { finished: [], running: [], timedOut: false, note: 'No job is running.' });
+      const outside = tempDir();
+      try {
+        const env = { ...process.env, AGENTHUB_RELAY_ROOT: outside.dir };
+        delete env.CLAUDE_PROJECT_DIR;
+        await assert.rejects(createRelay({ cwd: outside.dir, env }).call('relay_status', {}), err => err.code === 'not-a-git-repo');
+      } finally {
+        outside.cleanup();
+      }
     } finally {
       cleanup();
     }

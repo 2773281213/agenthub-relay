@@ -146,16 +146,11 @@ test('a live job whose worker vanished is reconciled to failed (worker-lost)', a
   }
 });
 
-test('the watcher record says whether a planner-side watcher was seen recently', () => {
+test('listing a repository that never dispatched creates nothing', () => {
   const { dir, cleanup } = tempDir();
   try {
-    const store = createStore(dir);
-    assert.equal(store.watcher().active, false);
-    store.recordWatcher('claude-code mod');
-    const seen = store.watcher();
-    assert.equal(seen.active, true);
-    assert.equal(seen.client, 'claude-code mod');
-    assert.equal(store.watcher(Date.now() + 10 * 60_000).active, false);
+    assert.deepEqual(createStore(dir).list(), []);
+    assert.equal(fs.existsSync(path.join(dir, '.agenthub')), false);
   } finally {
     cleanup();
   }

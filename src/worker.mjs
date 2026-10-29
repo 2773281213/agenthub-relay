@@ -44,22 +44,35 @@ function clip(text, max = MAX_SUMMARY_CHARS) {
  * @param {object} [options.env] the environment executors are filtered from
  * @param {AbortSignal} [options.signal] aborts the job (relay_cancel)
  */
-export async function runWorker({ root, jobId, env = process.env, signal } = {}) {
+export async function runWorker({ root, jobId, env = process.env, signal: external } = {}) {
   const store = createStore(root);
   const files = store.paths(jobId);
-  let job = store.read(jobId);
-  if (job.status !== 'queued') throw fail('job-not-queued', `Job ${jobId} is ${job.status}, not queued`);
-
-  job = await store.update(jobId, draft => {
+  let job = await store.update(jobId, draft => {
+    if (draft.status !== 'queued') throw fail('job-not-queued', `Job ${jobId} is ${draft.status}, not queued`);
+    draft.worker = { pid: process.pid };
+    if (draft.cancelRequested) {
+      draft.status = 'cancelled';
+      draft.endedAt = now();
+      draft.error = { code: 'cancelled', message: 'The job was cancelled before it started.' };
+      return;
+    }
     draft.status = 'running';
     draft.startedAt = now();
     draft.heartbeatAt = now();
-    draft.worker = { pid: process.pid };
   });
+  if (job.status === 'cancelled') return job;
+
+  // A cancel arrives as SIGTERM (the CLI turns it into `external`) or, if the
+  // signal is lost, as the record's cancelRequested flag seen at a heartbeat.
+  const controller = new AbortController();
+  const signal = controller.signal;
+  if (external?.aborted) controller.abort();
+  else external?.addEventListener('abort', () => controller.abort(), { once: true });
   const heartbeat = setInterval(() => {
     store
       .update(jobId, draft => {
         if (!TERMINAL.has(draft.status)) draft.heartbeatAt = now();
+        if (draft.cancelRequested) controller.abort();
       })
       .catch(() => {});
   }, HEARTBEAT_MS);
