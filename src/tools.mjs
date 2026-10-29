@@ -6,13 +6,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadConfig, TIERS } from './config.mjs';
+import { loadConfig, plannerFromName, TIERS } from './config.mjs';
 import { describeExecutors } from './executors.mjs';
 import { addWorktree, applyPatch, ensureExcluded, removeWorktree, repoRoot, snapshotBase } from './git.mjs';
 import { planDispatch } from './policy.mjs';
 import { createStore, isAlive, isJobId, newJobId, TERMINAL } from './store.mjs';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 export const MAX_WAIT_SECONDS = 50;
 /** A watcher counts as active while it polled this recently. */
 export const WATCHER_ACTIVE_MS = 3 * 60_000;
@@ -30,7 +30,7 @@ export const TOOLS = Object.freeze([
   {
     name: 'relay_agents',
     description:
-      'List the executors (codex, claude, dsh; agy and acp are reserved), whether each is installed, and which executor each tier goes to under the active profile.',
+      'List the executors (codex, claude, dsh; agy and acp are reserved), whether each is installed, which planner you are taken to be, the active profile and why, and the executor, model and effort each tier goes to.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -47,6 +47,8 @@ export const TOOLS = Object.freeze([
         task: { type: 'string', description: 'What the executor should do, self-contained.' },
         tier: { type: 'string', enum: [...TIERS] },
         executor: { type: 'string', description: 'Override the profile: codex, claude or dsh.' },
+        model: { type: 'string', description: "Model for this job, passed through the executor's own flag (codex -m, claude --model); dsh refuses one." },
+        effort: { type: 'string', description: 'Reasoning effort for this job (codex model_reasoning_effort, claude --effort).' },
         scope: { type: 'array', items: { type: 'string' }, description: 'Project-relative files or directories the job may change.' },
         checks: { type: 'array', items: { type: 'string' }, description: 'Shell commands that verify the work; run in the worktree after the executor.' },
         title: { type: 'string', description: 'A short label for status lists.' },
@@ -144,6 +146,8 @@ function summarize(job) {
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     endedAt: job.endedAt,
+    model: job.model,
+    effort: job.effort,
     changedFiles: job.changedFiles?.length,
     outOfScope: job.outOfScope?.length,
     resultFetched: Boolean(job.resultFetchedAt),
@@ -176,11 +180,29 @@ function sleep(ms, signal) {
  * @param {string} [options.cwd] where to look for the repository
  * @param {object} [options.env] environment (AGENTHUB_RELAY_ROLE, credentials to pass by name)
  * @param {Function} [options.startWorker] (root, jobId, env, workerLog) => pid
- * @param {Function} [options.clientName] () => the MCP client's name, a label only
+ * @param {Function} [options.clientName] () => the MCP client's name; it identifies the planner when nothing else does
+ * @param {string} [options.planner] the planner's id, as given on the command line
+ * @param {number} [options.maxWaitSeconds] the longest relay_wait (MCP clients time out tool calls)
  */
-export function createRelay({ cwd = process.cwd(), env = process.env, startWorker = startWorkerProcess, clientName = () => 'unknown' } = {}) {
+export function createRelay({
+  cwd = process.cwd(),
+  env = process.env,
+  startWorker = startWorkerProcess,
+  clientName = () => 'unknown',
+  planner,
+  maxWaitSeconds = MAX_WAIT_SECONDS,
+} = {}) {
   let rootPromise;
   let watcherSeenAt;
+
+  /** Who is planning: the explicit id, AGENTHUB_RELAY_PLANNER, or the MCP client's name. */
+  function plannerId() {
+    return plannerFromName(planner ?? env.AGENTHUB_RELAY_PLANNER ?? clientName());
+  }
+
+  function config(r) {
+    return loadConfig({ root: r, env, planner: plannerId() });
+  }
 
   async function root() {
     rootPromise ??= resolveRoot(cwd, env).catch(err => {
@@ -207,28 +229,31 @@ export function createRelay({ cwd = process.cwd(), env = process.env, startWorke
   const handlers = {
     async relay_agents() {
       const r = await root();
-      const config = loadConfig({ root: r, env });
+      const settings = config(r);
       return {
         root: r,
-        profile: config.profile,
-        mapping: config.mapping,
-        configFile: config.source ?? undefined,
+        planner: settings.planner,
+        profile: settings.profile,
+        profileReason: settings.profileReason,
+        mapping: settings.mapping,
+        routes: settings.routes,
+        configFiles: settings.sources,
         tiers: {
           deep: 'Complex or multi-file work; scope required.',
-          light: `Simple, clearly specified work; 1-${config.light.maxScopeEntries} scope paths and at least one check.`,
+          light: `Simple, clearly specified work; 1-${settings.light.maxScopeEntries} scope paths and at least one check.`,
           review: 'Read-only investigation; any change is reported out of scope.',
         },
-        executors: describeExecutors(config, env),
+        executors: describeExecutors(settings, env),
       };
     },
 
     async relay_dispatch(args) {
       const r = await root();
-      const config = loadConfig({ root: r, env });
+      const settings = config(r);
       const store = createStore(r);
       return store.withDispatchLock(async () => {
         const jobs = await listJobs(store);
-        const plan = planDispatch({ request: args, config, jobs, role: env.AGENTHUB_RELAY_ROLE });
+        const plan = planDispatch({ request: args, config: settings, jobs, role: env.AGENTHUB_RELAY_ROLE });
         const base = await snapshotBase(r);
         await ensureExcluded(r);
         const id = newJobId();
@@ -242,11 +267,11 @@ export function createRelay({ cwd = process.cwd(), env = process.env, startWorke
           store.create({
             id,
             ...plan,
-            planner: { client: clientName() },
+            planner: { client: clientName(), id: settings.planner, profile: settings.profile },
             base,
             worktree: path.relative(r, dir),
             branch,
-            passEnv: config.executors[plan.executor].passEnv,
+            passEnv: settings.executors[plan.executor].passEnv,
             warnings,
           });
         } catch (err) {
@@ -272,6 +297,10 @@ export function createRelay({ cwd = process.cwd(), env = process.env, startWorke
           title: plan.title,
           tier: plan.tier,
           executor: plan.executor,
+          model: plan.model,
+          effort: plan.effort,
+          planner: settings.planner,
+          profile: settings.profile,
           scope: plan.scope,
           checks: plan.checks,
           worktree: path.relative(r, dir),
@@ -304,7 +333,7 @@ export function createRelay({ cwd = process.cwd(), env = process.env, startWorke
       if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) {
         throw fail('invalid-request', 'timeoutSeconds must be a non-negative number');
       }
-      seconds = Math.min(seconds, MAX_WAIT_SECONDS);
+      seconds = Math.min(seconds, maxWaitSeconds);
       let ids = args.jobIds;
       if (ids !== undefined && (!Array.isArray(ids) || ids.some(id => !isJobId(id)))) {
         throw fail('invalid-request', 'jobIds must be a list of job ids');

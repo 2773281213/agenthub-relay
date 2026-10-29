@@ -71,8 +71,12 @@ test('a non-Claude MCP client runs the whole relay flow', async () => {
     ]);
     for (const t of listed.result.tools) assert.equal(t.inputSchema.type, 'object');
 
+    // A Codex client is recognized as a Codex planner and gets the profile
+    // that keeps deep work off Codex itself (v0.1 gave every client thread16).
     const agents = await server.tool('relay_agents');
-    assert.equal(agents.data.profile, 'thread16');
+    assert.equal(agents.data.planner, 'codex');
+    assert.equal(agents.data.profile, 'codex-planner');
+    assert.equal(agents.data.mapping.deep, 'claude');
 
     const dispatched = await server.tool('relay_dispatch', {
       tier: 'light',
@@ -92,7 +96,8 @@ test('a non-Claude MCP client runs the whole relay flow', async () => {
     assert.equal(result.data.summary, 'edited src/app.txt');
 
     const job = JSON.parse(fs.readFileSync(`${dir}/.agenthub/jobs/${jobId}/job.json`, 'utf8'));
-    assert.equal(job.planner.client, 'codex-mcp-client', 'the client name is recorded as a label only');
+    assert.equal(job.planner.client, 'codex-mcp-client');
+    assert.equal(job.planner.id, 'codex', 'the client name identifies the planner');
   } finally {
     await server.stop();
     cleanup();
