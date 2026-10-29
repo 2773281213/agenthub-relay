@@ -10,12 +10,14 @@ import path from 'node:path';
 
 import { notRun, redactText, runChecks, runProcess, verdict } from './checks.mjs';
 import { loadConfig } from './config.mjs';
-import { adapterFor, buildPrompt, childEnv } from './executors.mjs';
+import { adapterFor, buildPrompt, childEnv, spawnArgv } from './executors.mjs';
 import { collectChanges } from './git.mjs';
 import { outOfScope } from './policy.mjs';
 import { createStore, HEARTBEAT_MS, TERMINAL } from './store.mjs';
 
 const MAX_SUMMARY_CHARS = 20_000;
+/** How often the worker reads the cancel flag (relay_cancel on Windows sends no signal). */
+export const CANCEL_POLL_MS = 1_000;
 
 function fail(code, message) {
   return Object.assign(new Error(message), { code });
@@ -77,9 +79,18 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
       .catch(() => {});
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
+  const cancelPoll = setInterval(() => {
+    try {
+      if (store.read(jobId).cancelRequested) controller.abort();
+    } catch {
+      // a read racing a write: the next poll sees it
+    }
+  }, CANCEL_POLL_MS);
+  cancelPoll.unref?.();
 
   const finish = async (mutate, event) => {
     clearInterval(heartbeat);
+    clearInterval(cancelPoll);
     const final = await store.update(jobId, draft => {
       mutate(draft);
       draft.endedAt = now();
@@ -104,7 +115,7 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
     });
     store.appendEvent(jobId, { type: 'executor-started', executor: job.executor });
     const run = await runProcess({
-      argv: invocation.argv,
+      argv: spawnArgv(invocation.argv, { env: executorEnv }),
       cwd: worktree,
       env: executorEnv,
       stdin: invocation.stdin,
@@ -152,6 +163,7 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
             logDir: files.checksDir,
             signal,
             redact,
+            shell: config.checks.shell,
           })
         : notRun(job.checks, 'not run: the executor did not finish successfully');
       cancelled = signal?.aborted === true;

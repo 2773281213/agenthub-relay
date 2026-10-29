@@ -5,10 +5,10 @@
 //   dsh    - `dsh --profile headless "<task>"` (final answer on stdout, exit 0/1)
 // Antigravity (agy) and the generic ACP executor are reserved and fail closed.
 
-import fs from 'node:fs';
 import path from 'node:path';
 
 import { RESERVED } from './config.mjs';
+import { locateCommand, resolveCommand } from './platform.mjs';
 
 /** dsh takes the task as one argument; keep it well under the OS limit. */
 export const MAX_ARGV_PROMPT_BYTES = 100_000;
@@ -25,6 +25,12 @@ export const BASE_ENV = Object.freeze([
   'CODEX_HOME', 'CLAUDE_CONFIG_DIR',
   'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'no_proxy',
   'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+  // Windows: programs need these to find the system, the user profile
+  // (where codex, claude and dsh keep their sign-in) and temp folders.
+  'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'SYSTEMDRIVE',
+  'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
+  'PROGRAMFILES', 'PROGRAMFILES(X86)', 'COMMONPROGRAMFILES', 'TEMP', 'TMP',
+  'USERNAME', 'USERDOMAIN', 'COMPUTERNAME', 'OS', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS',
 ]);
 
 function fail(code, message) {
@@ -36,23 +42,21 @@ function tail(text, max = 600) {
   return trimmed.length > max ? `…${trimmed.slice(-max)}` : trimmed;
 }
 
-/** The absolute path `command` resolves to on PATH, or null. */
-export function findOnPath(command, envPath = process.env.PATH ?? '') {
-  const executable = file => {
-    try {
-      fs.accessSync(file, fs.constants.X_OK);
-      return fs.statSync(file).isFile();
-    } catch {
-      return false;
-    }
-  };
-  if (command.includes('/')) return executable(command) ? path.resolve(command) : null;
-  for (const dir of envPath.split(path.delimiter)) {
-    if (!dir) continue;
-    const candidate = path.join(dir, command);
-    if (executable(candidate)) return candidate;
-  }
-  return null;
+/** The absolute path `command` resolves to on PATH (with PATHEXT on Windows), or null. */
+export function findOnPath(command, envPath = process.env.PATH ?? '', platform = process.platform) {
+  const found = locateCommand(command, { env: { PATH: envPath }, platform });
+  return found ? path.resolve(found) : null;
+}
+
+/**
+ * The argv to spawn for an adapter's argv: its command resolved to the
+ * program that actually runs (an .exe, or node plus the script an npm/pnpm
+ * shim wraps on Windows). An unknown command is left as is, so spawning it
+ * reports that it cannot start.
+ */
+export function spawnArgv(argv, { env = process.env, platform = process.platform } = {}) {
+  const resolved = resolveCommand(argv[0], { env, platform });
+  return resolved ? [resolved.file, ...resolved.prefixArgs, ...argv.slice(1)] : argv;
 }
 
 /** The environment an executor runs with, and which named variables it got. */
@@ -229,13 +233,21 @@ export function adapterFor(id) {
 export function describeExecutors(config, env = process.env) {
   const tiersOf = id => Object.entries(config.mapping).filter(([, executor]) => executor === id).map(([tier]) => tier);
   const live = Object.entries(config.executors).map(([id, cfg]) => {
-    const found = findOnPath(cfg.command, env.PATH ?? '');
+    let resolved = null;
+    let problem;
+    try {
+      resolved = resolveCommand(cfg.command, { env });
+    } catch (err) {
+      problem = err.message;
+    }
     return {
       id,
       label: ADAPTERS[id].label,
       command: cfg.command,
-      available: found !== null,
-      path: found ?? undefined,
+      available: resolved !== null,
+      path: resolved?.path,
+      via: resolved?.via,
+      problem,
       tiers: tiersOf(id),
       model: cfg.model,
       effort: cfg.effort,

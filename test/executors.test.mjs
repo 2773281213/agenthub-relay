@@ -177,3 +177,12 @@ test('relay_agents reports default models and which executors can take one', () 
   assert.equal(byId.claude.choosesEffort, true);
   assert.equal(byId.dsh.choosesModel, false);
 });
+
+test('executors on Windows keep the variables Windows programs need, and nothing else unnamed', () => {
+  const source = { SYSTEMROOT: 'C:\\Windows', USERPROFILE: 'C:\\Users\\me', APPDATA: 'C:\\Users\\me\\AppData\\Roaming', SECRET_TOKEN: 'x' };
+  const { env } = childEnv(source, { passEnv: [] }, 'j20261029-000000-abcdef');
+  assert.equal(env.SYSTEMROOT, 'C:\\Windows');
+  assert.equal(env.USERPROFILE, 'C:\\Users\\me', 'codex, claude and dsh keep their sign-in under the profile');
+  assert.equal(env.APPDATA, source.APPDATA);
+  assert.equal(env.SECRET_TOKEN, undefined);
+});

@@ -161,3 +161,15 @@ test('an executor without a model or effort flag refuses one, with the reason', 
   const custom = buildConfig({ layers: [{ file: 'f.json', data: { executors: { dsh: { modelArgs: ['--model', '{model}'] } } } }] });
   assert.equal(planDispatch({ request: { ...light, model: 'deepseek-flash' }, config: custom }).model, 'deepseek-flash');
 });
+
+test('checks.shell names the shell checks run in, settable from the command line', () => {
+  const { root, env, projectFile, cleanup } = layout();
+  try {
+    assert.equal(buildConfig({}).checks.shell, undefined);
+    writeSetting({ file: projectFile, key: 'checks.shell', value: 'C:\\Program Files\\Git\\bin\\bash.exe' });
+    assert.equal(loadConfig({ root, env }).checks.shell, 'C:\\Program Files\\Git\\bin\\bash.exe');
+    assert.throws(() => buildConfig({ layers: [{ file: 'f.json', data: { checks: { shell: '' } } }] }), err => err.code === 'config-invalid');
+  } finally {
+    cleanup();
+  }
+});

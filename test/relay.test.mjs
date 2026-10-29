@@ -167,6 +167,39 @@ describe('checks', () => {
     assert.deepEqual(notRun(['a'], 'why'), [{ command: 'a', status: 'not-run', exitCode: null, summary: 'why' }]);
   });
 
+  test('checks run in the configured shell; the default is the platform shell', async () => {
+    const { dir, cleanup } = tempDir();
+    try {
+      const bashOnly = '[[ "relay" == r* ]]';
+      const [plain] = await runChecks([bashOnly], { cwd: dir, env: process.env, timeoutMs: 5_000, logDir: dir });
+      const [bash] = await runChecks([bashOnly], { cwd: dir, env: process.env, timeoutMs: 5_000, logDir: dir, shell: '/bin/bash' });
+      assert.equal(bash.status, 'passed', 'the configured bash understands [[ ]]');
+      assert.equal(plain.exitCode !== 0, fs.realpathSync('/bin/sh').endsWith('bash') ? false : true, '/bin/sh runs the default');
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('a command whose leftover child holds its pipes still finishes', async () => {
+    const { dir, cleanup } = tempDir();
+    try {
+      // On Windows the tree of an exited process cannot be found; simulate that
+      // by not killing the group (platform win32) while a grandchild keeps stdout.
+      const started = Date.now();
+      const run = await runProcess({
+        argv: ['sh', '-c', 'sleep 30 & echo started'],
+        cwd: dir,
+        env: process.env,
+        platform: 'win32',
+      });
+      assert.equal(run.exitCode, 0);
+      assert.match(run.stdout, /started/);
+      assert.ok(Date.now() - started < 10_000, 'the close grace period ends the wait');
+    } finally {
+      cleanup();
+    }
+  });
+
   test('a command that cannot start resolves with the spawn error', async () => {
     const run = await runProcess({ argv: ['/definitely/missing/binary'], cwd: process.cwd(), env: process.env });
     assert.equal(run.spawnError.code, 'ENOENT');

@@ -6,6 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { renameWithRetry } from './platform.mjs';
+
 export const TIERS = Object.freeze(['deep', 'light', 'review']);
 
 /** Tiers whose executors may write (inside their own worktree). */
@@ -256,6 +258,11 @@ export function buildConfig({ layers = [], env = {}, planner = 'unknown' } = {})
     if (data.checks !== undefined) {
       if (!isObject(data.checks)) throw fail('config-invalid', `${where}: checks must be an object`);
       for (const [key, value] of Object.entries(data.checks)) {
+        if (key === 'shell') {
+          if (typeof value !== 'string' || value.trim() === '') throw fail('config-invalid', `${where}: checks.shell must be the path or name of a shell`);
+          checks.shell = value;
+          continue;
+        }
         if (key !== 'timeoutMinutes') throw fail('config-invalid', `${where}: checks.${key} is not a known setting`);
         checkMinutes(value, `${where}: checks.timeoutMinutes`);
         checks.timeoutMinutes = value;
@@ -370,6 +377,7 @@ const SETTABLE = [
   { pattern: /^profiles\.([A-Za-z0-9_-]+)\.(deep|light|review)$/, parse: parseRoute },
   { pattern: /^executors\.([a-z]+)\.(model|effort|command)$/, parse: value => value },
   { pattern: /^executors\.([a-z]+)\.timeoutMinutes$/, parse: value => Number(value) },
+  { pattern: /^checks\.shell$/, parse: value => value },
 ];
 
 /** The keys `config set` and `config unset` accept. */
@@ -378,6 +386,7 @@ export const SETTABLE_KEYS = Object.freeze([
   'plannerProfiles.<planner>',
   'profiles.<name>.<deep|light|review>',
   'executors.<codex|claude|dsh>.<model|effort|command|timeoutMinutes>',
+  'checks.shell',
 ]);
 
 /**
@@ -414,6 +423,6 @@ export function writeSetting({ file, key, value, unset = false, layersBelow = []
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(temp, `${JSON.stringify(data, null, 2)}\n`);
-  fs.renameSync(temp, file);
+  renameWithRetry(temp, file);
   return { file, key, value: parsed, removed: unset };
 }

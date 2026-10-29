@@ -9,6 +9,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { renameWithRetry } from './platform.mjs';
+
 export const STATUSES = Object.freeze(['queued', 'running', 'verifying', 'completed', 'failed', 'cancelled']);
 export const TERMINAL = Object.freeze(new Set(['completed', 'failed', 'cancelled']));
 export const INTEGRATIONS = Object.freeze(['none', 'applied', 'discarded']);
@@ -70,7 +72,7 @@ export function isAlive(pid) {
 export function writeJsonAtomic(file, value) {
   const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
-  fs.renameSync(tmp, file);
+  renameWithRetry(tmp, file);
 }
 
 function readJson(file) {

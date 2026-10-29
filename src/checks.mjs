@@ -1,6 +1,7 @@
 // Running child processes for the worker: the executor itself and the
-// planner's check commands. Every child gets its own process group so that a
-// timeout or a cancel ends it together with anything it started.
+// planner's check commands. A timeout or a cancel ends a child together with
+// anything it started: its process group on POSIX, its process tree (taskkill)
+// on Windows.
 //
 // Check records follow Birdview's semantics: passed requires exit code 0,
 // failed requires a non-zero exit code, not-run requires a null exit code.
@@ -11,6 +12,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+
+import { checkShell, childSpawnOptions, killTree } from './platform.mjs';
 
 /** The exit code recorded for a command stopped by its timeout. */
 export const TIMEOUT_EXIT_CODE = 124;
@@ -23,14 +26,12 @@ const MAX_STDERR_CHARS = 1024 * 1024;
 /** Shorter values would redact ordinary words. */
 const MIN_SECRET_CHARS = 6;
 
-/** Signals the whole process group led by `pid` (ESRCH means it is gone). */
-export function signalGroup(pid, signal) {
-  try {
-    process.kill(-pid, signal);
-    return true;
-  } catch {
-    return false;
-  }
+/** Once a command has exited, how long its pipes may stay open (held by something it left running). */
+export const CLOSE_GRACE_MS = 2_000;
+
+/** Signals the whole process group led by `pid` (ESRCH means it is gone); on Windows ends the tree. */
+export function signalGroup(pid, signal, platform = process.platform) {
+  return killTree(pid, { signal, platform });
 }
 
 function signalNumber(signal) {
@@ -96,7 +97,7 @@ class Capture {
  * Never rejects: a command that cannot start resolves with `spawnError`.
  * Output reaches the log, `stdout` and `stderr` with `redact` values replaced.
  */
-export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, signal, redact = [] }) {
+export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, signal, redact = [], shell, platform = process.platform }) {
   return new Promise(resolve => {
     const started = Date.now();
     const log = logFile ? fs.createWriteStream(logFile, { flags: 'a' }) : null;
@@ -120,6 +121,7 @@ export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, s
     let settled = false;
     let timer;
     let killTimer;
+    let closeTimer;
     let child;
 
     const finish = result => {
@@ -127,6 +129,7 @@ export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, s
       settled = true;
       clearTimeout(timer);
       clearTimeout(killTimer);
+      clearTimeout(closeTimer);
       signal?.removeEventListener('abort', onAbort);
       take(stdout, outRedactor.end());
       take(stderr, errRedactor.end());
@@ -137,8 +140,9 @@ export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, s
 
     const stop = () => {
       if (!child?.pid) return;
-      signalGroup(child.pid, 'SIGTERM');
-      killTimer = setTimeout(() => signalGroup(child.pid, 'SIGKILL'), KILL_GRACE_MS);
+      // Windows has no graceful signal for a console tree: taskkill is forced.
+      signalGroup(child.pid, 'SIGTERM', platform);
+      if (platform !== 'win32') killTimer = setTimeout(() => signalGroup(child.pid, 'SIGKILL', platform), KILL_GRACE_MS);
     };
     const onAbort = () => {
       cancelled = true;
@@ -146,12 +150,8 @@ export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, s
     };
 
     try {
-      child = spawn(argv[0], argv.slice(1), {
-        cwd,
-        env,
-        detached: true,
-        stdio: [stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-      });
+      const options = { cwd, env, ...childSpawnOptions(platform), stdio: [stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'] };
+      child = shell === undefined ? spawn(argv[0], argv.slice(1), options) : spawn(argv[0], { ...options, shell });
     } catch (err) {
       finish({ exitCode: null, signal: null, spawnError: err });
       return;
@@ -180,7 +180,14 @@ export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, s
       exited = { exitCode: code, signal: sig };
       // Anything the command left running in its group goes with it; that
       // also closes pipes a leftover process would otherwise hold open.
-      signalGroup(child.pid, 'SIGKILL');
+      if (platform !== 'win32') signalGroup(child.pid, 'SIGKILL', platform);
+      // Windows cannot find the tree of an exited process: stop waiting for
+      // pipes that something it left behind still holds.
+      closeTimer = setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish(exited);
+      }, CLOSE_GRACE_MS);
     });
     child.on('close', (code, sig) => finish(exited ?? { exitCode: code, signal: sig }));
   });
@@ -206,7 +213,7 @@ export function notRun(commands, reason) {
 }
 
 /** Runs the planner's checks one after another in the job's worktree. */
-export async function runChecks(commands, { cwd, env, timeoutMs, logDir, signal, redact = [] }) {
+export async function runChecks(commands, { cwd, env, timeoutMs, logDir, signal, redact = [], shell, platform = process.platform }) {
   const results = [];
   for (const [index, command] of commands.entries()) {
     if (signal?.aborted) {
@@ -214,7 +221,8 @@ export async function runChecks(commands, { cwd, env, timeoutMs, logDir, signal,
       break;
     }
     const logFile = path.join(logDir, `${index}.log`);
-    const run = await runProcess({ argv: ['/bin/sh', '-c', command], cwd, env, timeoutMs, logFile, signal, redact });
+    // Node's shell option: /bin/sh -c on POSIX, cmd.exe /d /s /c on Windows, or the configured shell.
+    const run = await runProcess({ argv: [command], shell: checkShell(shell), cwd, env, timeoutMs, logFile, signal, redact, platform });
     if (run.spawnError) {
       results.push({ command, status: 'failed', exitCode: 127, summary: `could not start: ${run.spawnError.message}`, log: logFile });
       continue;
