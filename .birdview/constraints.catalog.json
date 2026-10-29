@@ -2,21 +2,33 @@
   "schema": "birdview.constraint-catalog/v1",
   "project": {
     "name": "agenthub-relay",
-    "revision": "481f29791b043bbc9b29c79bcba07e2c91fa8393"
+    "revision": "60e950b3c6f46c381c0a9bd84e1edf30a59c2df0"
   },
   "coverage": {
-    "checkedAt": "2026-10-29T06:21:06.850Z",
+    "checkedAt": "2026-10-29T12:25:05.404Z",
     "snapshot": "committed-HEAD",
     "shallow": false,
     "entries": [
-      "AGENTS.md",
-      "CLAUDE.md",
-      "skills/agenthub-relay/SKILL.md"
-    ],
-    "checkedPaths": [
+      ".birdview/proposals/skill-packaging/drafts/agenthub-relay/SKILL.md",
+      ".birdview/proposals/skill-packaging/drafts/relay-review/SKILL.md",
+      ".birdview/proposals/skill-packaging/drafts/relay-status/SKILL.md",
       "AGENTS.md",
       "CLAUDE.md",
       "skills/agenthub-relay/SKILL.md",
+      "skills/relay-config/SKILL.md",
+      "skills/relay-review/SKILL.md",
+      "skills/relay-status/SKILL.md"
+    ],
+    "checkedPaths": [
+      ".birdview/proposals/skill-packaging/drafts/agenthub-relay/SKILL.md",
+      ".birdview/proposals/skill-packaging/drafts/relay-review/SKILL.md",
+      ".birdview/proposals/skill-packaging/drafts/relay-status/SKILL.md",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "skills/agenthub-relay/SKILL.md",
+      "skills/relay-config/SKILL.md",
+      "skills/relay-review/SKILL.md",
+      "skills/relay-status/SKILL.md",
       "docs/design.md"
     ],
     "excluded": [],
@@ -50,13 +62,104 @@
   ],
   "sources": [
     {
+      "id": "source-9bb160a451ea1fe5",
+      "path": ".birdview/proposals/skill-packaging/drafts/agenthub-relay/SKILL.md",
+      "kind": "skill",
+      "scope": null,
+      "discoveredFrom": null,
+      "applicability": "unreviewed",
+      "text": "---\nname: agenthub-relay\ndescription: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) with the bundled relay script - split the work, pick a tier, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.\n---\n\n# agenthub-relay: delegating to other agents (DRAFT for evaluation)\n\nYou are the planner. Executors run in their own git worktrees; your working tree changes only when you run `apply`. Run the bundled script with Node.js 20 or newer: `node <skill-root>/scripts/relay.mjs <command>`. If the relay_* MCP tools are loaded, they do the same thing; use either.\n\nDo not delegate when you are yourself an executor (`AGENTHUB_RELAY_ROLE=executor`; `dispatch` refuses), when you cannot state the task precisely, or when explaining it costs more than doing it.\n\n## Commands\n\n- `dispatch --tier deep|light|review --scope <path>... --check <cmd>... --task-file <file>`: start a job; prints its id as JSON.\n- `wait <id> [--timeout <seconds>]`, `result <id>`, `apply <id>`, `discard <id>`, `cancel <id>`, `status`.\n\n## With Birdview\n\nWhen Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation.",
+      "sections": [
+        {
+          "id": "source-9bb160a451ea1fe5-s1",
+          "title": "agenthub-relay: delegating to other agents (DRAFT for evaluation)",
+          "level": 1,
+          "line": 6,
+          "endLine": 11,
+          "text": "# agenthub-relay: delegating to other agents (DRAFT for evaluation)\n\nYou are the planner. Executors run in their own git worktrees; your working tree changes only when you run `apply`. Run the bundled script with Node.js 20 or newer: `node <skill-root>/scripts/relay.mjs <command>`. If the relay_* MCP tools are loaded, they do the same thing; use either.\n\nDo not delegate when you are yourself an executor (`AGENTHUB_RELAY_ROLE=executor`; `dispatch` refuses), when you cannot state the task precisely, or when explaining it costs more than doing it.\n"
+        },
+        {
+          "id": "source-9bb160a451ea1fe5-s2",
+          "title": "Commands",
+          "level": 2,
+          "line": 12,
+          "endLine": 16,
+          "text": "## Commands\n\n- `dispatch --tier deep|light|review --scope <path>... --check <cmd>... --task-file <file>`: start a job; prints its id as JSON.\n- `wait <id> [--timeout <seconds>]`, `result <id>`, `apply <id>`, `discard <id>`, `cancel <id>`, `status`.\n"
+        },
+        {
+          "id": "source-9bb160a451ea1fe5-s3",
+          "title": "With Birdview",
+          "level": 2,
+          "line": 17,
+          "endLine": 19,
+          "text": "## With Birdview\n\nWhen Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation."
+        }
+      ],
+      "history": {
+        "complete": true,
+        "version": 1,
+        "lastEdited": "2026-10-29T16:54:41+08:00",
+        "commit": "c0c8c8c4b7387bd5da1f753d9527cc0784dcc9cf"
+      }
+    },
+    {
+      "id": "source-ecc4ed0d8e5899fb",
+      "path": ".birdview/proposals/skill-packaging/drafts/relay-review/SKILL.md",
+      "kind": "skill",
+      "scope": null,
+      "discoveredFrom": null,
+      "applicability": "unreviewed",
+      "text": "---\nname: relay-review\ndescription: Ask another agent (Codex, Claude Code or DeepSeek Harness) for a read-only second opinion on a diff, a bug or a design through agenthub-relay. Use only when the user invokes relay-review; it never changes files and does not review architecture.\ndisable-model-invocation: true\n---\n\n# relay-review (DRAFT for evaluation)\n\nThis thin entry requires the agenthub-relay skill in the sibling ../agenthub-relay directory. Dispatch one `review` tier job with `node ../agenthub-relay/scripts/relay.mjs dispatch --tier review`, wait for it, and report its findings next to your own. A review job is read-only: any change it makes is reported out of scope and is never applied.\n\nWhen the user asks for an architecture review, birdview-review owns the report; offer this second opinion as an input to that one review instead of producing a separate report.",
+      "sections": [
+        {
+          "id": "source-ecc4ed0d8e5899fb-s1",
+          "title": "relay-review (DRAFT for evaluation)",
+          "level": 1,
+          "line": 7,
+          "endLine": 11,
+          "text": "# relay-review (DRAFT for evaluation)\n\nThis thin entry requires the agenthub-relay skill in the sibling ../agenthub-relay directory. Dispatch one `review` tier job with `node ../agenthub-relay/scripts/relay.mjs dispatch --tier review`, wait for it, and report its findings next to your own. A review job is read-only: any change it makes is reported out of scope and is never applied.\n\nWhen the user asks for an architecture review, birdview-review owns the report; offer this second opinion as an input to that one review instead of producing a separate report."
+        }
+      ],
+      "history": {
+        "complete": true,
+        "version": 1,
+        "lastEdited": "2026-10-29T16:54:41+08:00",
+        "commit": "c0c8c8c4b7387bd5da1f753d9527cc0784dcc9cf"
+      }
+    },
+    {
+      "id": "source-40f8d4fd7b5cea2e",
+      "path": ".birdview/proposals/skill-packaging/drafts/relay-status/SKILL.md",
+      "kind": "skill",
+      "scope": null,
+      "discoveredFrom": null,
+      "applicability": "unreviewed",
+      "text": "---\nname: relay-status\ndescription: Show agenthub-relay jobs in this repository and help decide whether to apply, discard or cancel each one. Use only when the user invokes relay-status.\ndisable-model-invocation: true\n---\n\n# relay-status (DRAFT for evaluation)\n\nThis thin entry requires the agenthub-relay skill in the sibling ../agenthub-relay directory. Run `node ../agenthub-relay/scripts/relay.mjs status`, then `result <id>` for finished jobs. Recommend apply or discard with reasons, and run `apply`, `discard` or `cancel` only after the user says which.",
+      "sections": [
+        {
+          "id": "source-40f8d4fd7b5cea2e-s1",
+          "title": "relay-status (DRAFT for evaluation)",
+          "level": 1,
+          "line": 7,
+          "endLine": 9,
+          "text": "# relay-status (DRAFT for evaluation)\n\nThis thin entry requires the agenthub-relay skill in the sibling ../agenthub-relay directory. Run `node ../agenthub-relay/scripts/relay.mjs status`, then `result <id>` for finished jobs. Recommend apply or discard with reasons, and run `apply`, `discard` or `cancel` only after the user says which."
+        }
+      ],
+      "history": {
+        "complete": true,
+        "version": 1,
+        "lastEdited": "2026-10-29T16:54:41+08:00",
+        "commit": "c0c8c8c4b7387bd5da1f753d9527cc0784dcc9cf"
+      }
+    },
+    {
       "id": "source-a54ff182c7e8acf5",
       "path": "AGENTS.md",
       "kind": "instruction",
       "scope": ".",
       "discoveredFrom": null,
       "applicability": "unreviewed",
-      "text": "# agenthub-relay agent instructions\n\nThese rules apply to every agent working in this repository, whichever agent is planning and whichever is executing (Claude Code, Codex, DeepSeek Harness, Antigravity or another MCP client). The design they protect is described in [docs/design.md](docs/design.md).\n\n## Architecture rules\n\n- Keep the hub planner-neutral: code under `src/` must not assume which agent is the planner; Claude Code specific behavior lives only in `hooks/`, `types/` and `.claude-plugin/`.\n- Use no runtime dependencies: the hub ships as plain ESM JavaScript for Node.js 20 or newer, and code under `src/` imports only the Node.js standard library.\n- Treat Antigravity (`agy`) and the generic ACP executor as reserved in v0.1: dispatching to a reserved executor must fail closed with an error that names the reason.\n\n## Execution safety rules\n\n- Run every executor inside its own git worktree under `.agenthub/worktrees/`; the main working tree may change only through `relay_apply`.\n- Refuse a `light` tier job unless it declares an explicit file scope and at least one check command.\n- Refuse a write job whose scope overlaps the scope of an active write job, using directory-prefix matching (`src/api` covers `src/api/x.ts` but not `src/api-other.ts`).\n- Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`; in that role the hub must refuse `relay_dispatch` and the Claude Code mod must stay inactive.\n- Pass secrets only by environment variable name; never write API keys or environment values into job records, logs, events or test fixtures.\n\n## Verification rules\n\n- Record checks with Birdview semantics: `passed` requires exit code 0, `failed` requires a non-zero exit code and `not-run` requires a null exit code; a job with any failed check ends as `failed`, and a job without checks is reported as unverified.\n- Ship every behavior change with a `node --test` test that exercises observable behavior through public interfaces; changes to `hooks/` also need `claude plugin test` coverage.\n\n## Cache keep-alive rules\n\n- Keep the Claude Code planner's prompt cache warm only through `$.model.fork`, only while relay jobs are running, never once the cache is presumed cold, and never beyond the configured ceiling; keep-alive must not add turns to the transcript.",
+      "text": "# agenthub-relay agent instructions\n\nThese rules apply to every agent working in this repository, whichever agent is planning and whichever is executing (Claude Code, Codex, DeepSeek Harness, Antigravity or another MCP client). The design they protect is described in [docs/design.md](docs/design.md).\n\n## Architecture rules\n\n- Keep the hub planner-neutral: code under `src/` must not assume which agent is the planner; Claude Code specific behavior lives only in `hooks/`, `types/` and `.claude-plugin/`.\n- Use no runtime dependencies: the hub ships as plain ESM JavaScript for Node.js 20 or newer, and code under `src/` imports only the Node.js standard library.\n- Treat Antigravity (`agy`) and the generic ACP executor as reserved until their adapters exist: dispatching to a reserved executor must fail closed with an error that names the reason.\n- Generate `skills/agenthub-relay/scripts/` from `src/` with `npm run bundle:skill` and never edit that copy by hand; it must stay identical to `src/`, which `npm test` checks.\n\n## Execution safety rules\n\n- Run every executor inside its own git worktree under `.agenthub/worktrees/`; the main working tree may change only through `relay_apply`.\n- Refuse a `light` tier job unless it declares an explicit file scope and at least one check command.\n- Refuse a write job whose scope overlaps the scope of an active write job, using directory-prefix matching (`src/api` covers `src/api/x.ts` but not `src/api-other.ts`).\n- Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`; in that role the hub must refuse dispatching and changing the relay settings, and the Claude Code mod must stay inactive.\n- Pass secrets only by environment variable name; never write API keys or environment values into job records, logs, events or test fixtures.\n\n## Verification rules\n\n- Record checks with Birdview semantics: `passed` requires exit code 0, `failed` requires a non-zero exit code and `not-run` requires a null exit code; a job with any failed check ends as `failed`, and a job without checks is reported as unverified.\n- Ship every behavior change with a `node --test` test that exercises observable behavior through public interfaces; changes to `hooks/` also need `claude plugin test` coverage.\n\n## Cache keep-alive rules\n\n- Keep the Claude Code planner's prompt cache warm only through `$.model.fork`, only while relay jobs are running, never once the cache is presumed cold, and never beyond the configured ceiling; keep-alive must not add turns to the transcript.",
       "sections": [
         {
           "id": "source-a54ff182c7e8acf5-s1",
@@ -71,39 +174,39 @@
           "title": "Architecture rules",
           "level": 2,
           "line": 5,
-          "endLine": 10,
-          "text": "## Architecture rules\n\n- Keep the hub planner-neutral: code under `src/` must not assume which agent is the planner; Claude Code specific behavior lives only in `hooks/`, `types/` and `.claude-plugin/`.\n- Use no runtime dependencies: the hub ships as plain ESM JavaScript for Node.js 20 or newer, and code under `src/` imports only the Node.js standard library.\n- Treat Antigravity (`agy`) and the generic ACP executor as reserved in v0.1: dispatching to a reserved executor must fail closed with an error that names the reason.\n"
+          "endLine": 11,
+          "text": "## Architecture rules\n\n- Keep the hub planner-neutral: code under `src/` must not assume which agent is the planner; Claude Code specific behavior lives only in `hooks/`, `types/` and `.claude-plugin/`.\n- Use no runtime dependencies: the hub ships as plain ESM JavaScript for Node.js 20 or newer, and code under `src/` imports only the Node.js standard library.\n- Treat Antigravity (`agy`) and the generic ACP executor as reserved until their adapters exist: dispatching to a reserved executor must fail closed with an error that names the reason.\n- Generate `skills/agenthub-relay/scripts/` from `src/` with `npm run bundle:skill` and never edit that copy by hand; it must stay identical to `src/`, which `npm test` checks.\n"
         },
         {
           "id": "source-a54ff182c7e8acf5-s3",
           "title": "Execution safety rules",
           "level": 2,
-          "line": 11,
-          "endLine": 18,
-          "text": "## Execution safety rules\n\n- Run every executor inside its own git worktree under `.agenthub/worktrees/`; the main working tree may change only through `relay_apply`.\n- Refuse a `light` tier job unless it declares an explicit file scope and at least one check command.\n- Refuse a write job whose scope overlaps the scope of an active write job, using directory-prefix matching (`src/api` covers `src/api/x.ts` but not `src/api-other.ts`).\n- Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`; in that role the hub must refuse `relay_dispatch` and the Claude Code mod must stay inactive.\n- Pass secrets only by environment variable name; never write API keys or environment values into job records, logs, events or test fixtures.\n"
+          "line": 12,
+          "endLine": 19,
+          "text": "## Execution safety rules\n\n- Run every executor inside its own git worktree under `.agenthub/worktrees/`; the main working tree may change only through `relay_apply`.\n- Refuse a `light` tier job unless it declares an explicit file scope and at least one check command.\n- Refuse a write job whose scope overlaps the scope of an active write job, using directory-prefix matching (`src/api` covers `src/api/x.ts` but not `src/api-other.ts`).\n- Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`; in that role the hub must refuse dispatching and changing the relay settings, and the Claude Code mod must stay inactive.\n- Pass secrets only by environment variable name; never write API keys or environment values into job records, logs, events or test fixtures.\n"
         },
         {
           "id": "source-a54ff182c7e8acf5-s4",
           "title": "Verification rules",
           "level": 2,
-          "line": 19,
-          "endLine": 23,
+          "line": 20,
+          "endLine": 24,
           "text": "## Verification rules\n\n- Record checks with Birdview semantics: `passed` requires exit code 0, `failed` requires a non-zero exit code and `not-run` requires a null exit code; a job with any failed check ends as `failed`, and a job without checks is reported as unverified.\n- Ship every behavior change with a `node --test` test that exercises observable behavior through public interfaces; changes to `hooks/` also need `claude plugin test` coverage.\n"
         },
         {
           "id": "source-a54ff182c7e8acf5-s5",
           "title": "Cache keep-alive rules",
           "level": 2,
-          "line": 24,
-          "endLine": 26,
+          "line": 25,
+          "endLine": 27,
           "text": "## Cache keep-alive rules\n\n- Keep the Claude Code planner's prompt cache warm only through `$.model.fork`, only while relay jobs are running, never once the cache is presumed cold, and never beyond the configured ceiling; keep-alive must not add turns to the transcript."
         }
       ],
       "history": {
         "complete": true,
-        "version": 1,
-        "lastEdited": "2026-10-27T21:10:39+08:00",
-        "commit": "47e247b1be78d60a0e2c00a1d2c106a373b295be"
+        "version": 2,
+        "lastEdited": "2026-10-29T20:20:22+08:00",
+        "commit": "6830d4d638d207bb78e9bb6f064bbe669da5a179"
       }
     },
     {
@@ -138,7 +241,7 @@
       "scope": null,
       "discoveredFrom": null,
       "applicability": "unreviewed",
-      "text": "---\nname: agenthub-relay\ndescription: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) through the agenthub-relay relay_* MCP tools - split the work, pick a tier, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when the relay_* tools are available and part of a task can be done by another agent in parallel or more cheaply.\n---\n\n# agenthub-relay: delegating to other agents\n\nYou are the planner. Executors run in their own git worktrees; your working tree changes only when you call `relay_apply`. This works the same whichever agent plans: Claude Code, Codex, DeepSeek Harness or Antigravity.\n\nDo not delegate when you are yourself an executor (`AGENTHUB_RELAY_ROLE=executor`; `relay_dispatch` refuses), when you cannot state the task precisely, or when explaining it costs more than doing it.\n\n## 1. Split\n\n- Hand off pieces that are independent of each other and of what you are doing. Keep design decisions, cross-cutting changes and integration for yourself.\n- Give concurrent write jobs disjoint scopes. A write job holds its scope until it ends, and a completed one until you apply or discard it; an overlapping dispatch is refused.\n\n## 2. Pick a tier\n\n| Tier | For | Required | Default executor (`thread16`) |\n|---|---|---|---|\n| `deep` | complex or multi-file work that needs reasoning | `scope` (`\".\"` for the whole repository) | `codex` |\n| `light` | simple, clearly specified, mechanical work | 1-10 `scope` paths and at least one check | `dsh` (DeepSeek V4 Flash) |\n| `review` | read-only investigation or a second opinion | nothing; any change is reported out of scope | `claude` |\n\n`relay_agents` shows the active profile and which executors are installed. Set `executor` only for a reason, such as escalating a failed light job to `codex`.\n\n## 3. Write the task\n\nThe executor sees only your task and the repository at the base commit (tracked changes included; untracked files are not, and dispatch warns about them). Write it so a capable engineer new to the code could finish it:\n\n- the goal and why, in a sentence or two;\n- the files, symbols and conventions that matter;\n- constraints: what must not change, interfaces to keep;\n- `acceptance`: what done looks like;\n- `checks`: shell commands that exit 0 only when the work is right. They run in the job's worktree after the executor finishes; prefer focused tests to a slow full suite.\n\nNever put secrets in a task. Executors receive credentials only by variable name (`passEnv` in `.agenthub/config.json`).\n\n## 4. Wait\n\n- If the `relay_dispatch` result says `watcher.active: true`, end your turn: the watcher (the Claude Code mod) wakes you when a job ends, and keeps your prompt cache warm while you wait.\n- Otherwise call `relay_wait` (it returns within 50 seconds), doing other useful work between calls, until a job finishes.\n\n## 5. Review and integrate\n\n1. `relay_result`: summary, checks, changed files, out-of-scope files, patch stat and log paths. Read the patch (`logs.patch`) for anything that is not trivial.\n2. If it is right, `relay_apply`. The changes land unstaged in your working tree; review and commit them as your own. Out-of-scope changes need `allowOutOfScope: true`, and only after you have read them; a failed or cancelled job needs `force: true`.\n3. Otherwise `relay_discard`, then improve the task or move it up a tier and dispatch again.\n4. `relay_cancel` stops a job you no longer need.\n\nA completed job is not proof: \"checks passed\" covers only what the checks test, and a job without checks is unverified.\n\n## With Birdview\n\nWhen Birdview is active for the task, confirm Birdview's displayed plan before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation.",
+      "text": "---\nname: agenthub-relay\ndescription: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) with the bundled relay script or the relay_* MCP tools - split the work, pick a tier and, when asked, an executor and model, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.\n---\n\n# agenthub-relay: delegating to other agents\n\nYou are the planner. Executors run in their own git worktrees; your working tree changes only when you apply a job. This works the same whichever agent plans: Claude Code, Codex, DeepSeek Harness or Antigravity.\n\nDo not delegate when you are yourself an executor (`AGENTHUB_RELAY_ROLE=executor`; dispatch refuses), when you cannot state the task precisely, or when explaining it costs more than doing it.\n\n## How to call the relay\n\nRun the bundled script with Node.js 20 or newer from the repository you are working in:\n\n```sh\nnode <this skill's directory>/scripts/cli.mjs <command> --planner <you>\n```\n\n`<you>` is `claude`, `codex`, `dsh` or `agy`: say who you are on every command (or set `AGENTHUB_RELAY_PLANNER`). It picks the profile meant for your kind of planner, so that, for example, a Codex planner's deep work goes to Claude Code instead of back to Codex. Every command prints JSON; exit code 1 means the relay refused (read `error.code` and `error.message`), 2 means the command was malformed.\n\nIf the `relay_*` MCP tools are loaded (the Claude Code plugin loads them), you may use them instead; they do the same thing and record the same jobs.\n\n| Command | Tool |\n|---|---|\n| `agents` | `relay_agents` |\n| `dispatch --tier <t> --task-file - [--scope <p>]... [--check <c>]... [--executor <id>] [--model <m>] [--effort <e>] [--title <s>] [--acceptance <s>]` (task on stdin) | `relay_dispatch` |\n| `wait [<id>...] [--timeout <s>]` | `relay_wait` |\n| `result <id>` | `relay_result` |\n| `apply <id> [--allow-out-of-scope] [--force]`, `discard <id>`, `cancel <id>` | `relay_apply`, `relay_discard`, `relay_cancel` |\n| `status [<id>] [--json]` | `relay_status` |\n| `config show`, `config set <key> <value> [--user]`, `config unset <key> [--user]` | (script only) |\n\n## 1. Who executes, and with which model\n\n- The first time you use the relay in a project, run `config show`. If it still shows the built-in defaults, tell the user which executor and model each tier goes to and ask once whether to keep that.\n- When the user names an executor, model or effort for a piece of work (\"give this to Claude Opus\"), pass `--executor`, `--model` and `--effort` on that dispatch only.\n- Save a choice with `config set` only when the user asks for it to stick (\"from now on, light work uses …\"). Say what you will write before you write it. Tier values are `executor[:model][@effort]`, for example `config set profiles.thread16.deep claude:opus@high`; `--user` saves it for every project.\n- An executor that has no flag for a model refuses one with `model-unsupported` (DeepSeek Harness sets its model in its own settings). Tell the user; do not retry with another model.\n- You cannot change your own model from here. If the user wants a different planner model, point them to their host (in Claude Code, `/model`).\n\n## 2. Split\n\n- Hand off pieces that are independent of each other and of what you are doing. Keep design decisions, cross-cutting changes and integration for yourself.\n- Give concurrent write jobs disjoint scopes. A write job holds its scope until it ends, and a completed one until you apply or discard it; an overlapping dispatch is refused.\n\n## 3. Pick a tier\n\n| Tier | For | Required | Default executor (`thread16` / `codex-planner`) |\n|---|---|---|---|\n| `deep` | complex or multi-file work that needs reasoning | `scope` (`\".\"` for the whole repository) | `codex` / `claude` |\n| `light` | simple, clearly specified, mechanical work | 1-10 `scope` paths and at least one check | `dsh` (DeepSeek V4 Flash) |\n| `review` | read-only investigation or a second opinion | nothing; any change is reported out of scope | `claude` / `codex` |\n\n`agents` shows the active profile, why it was chosen, and which executors are installed.\n\n## 4. Write the task\n\nThe executor sees only your task and the repository at the base commit (tracked changes included; untracked files are not, and dispatch warns about them). Write it so a capable engineer new to the code could finish it:\n\n- the goal and why, in a sentence or two;\n- the files, symbols and conventions that matter;\n- constraints: what must not change, interfaces to keep;\n- `acceptance`: what done looks like;\n- `checks`: shell commands that exit 0 only when the work is right. They run in the job's worktree after the executor finishes; prefer focused tests to a slow full suite.\n\nPass the task on stdin (`--task-file -`) to avoid shell quoting. Never put secrets in a task. Executors receive credentials only by variable name (`passEnv` in `.agenthub/config.json`, edited by hand).\n\n## 5. Wait\n\n- With the relay_* MCP tools in Claude Code: if the dispatch result says `watcher.active: true`, end your turn; the Claude Code mod wakes you when a job ends and keeps your prompt cache warm meanwhile.\n- Otherwise run `wait` (50 seconds by default; `--timeout` up to 3600 if your shell allows long commands), doing other useful work between calls, until a job finishes.\n\n## 6. Review and integrate\n\n1. `result <id>`: summary, model, checks, changed files, out-of-scope files, patch stat and log paths. Read the patch (`logs.patch`) for anything that is not trivial.\n2. If it is right, `apply <id>`. The changes land unstaged in your working tree; review and commit them as your own. Out-of-scope changes need `--allow-out-of-scope`, and only after you have read them; a failed or cancelled job needs `--force`.\n3. Otherwise `discard <id>`, then improve the task or move it up a tier and dispatch again.\n4. `cancel <id>` stops a job you no longer need.\n\nA completed job is not proof: \"checks passed\" covers only what the checks test, and a job without checks is unverified.\n\n## With Birdview\n\nWhen Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation.",
       "sections": [
         {
           "id": "source-7bb41a60ccd5329c-s1",
@@ -146,62 +249,153 @@
           "level": 1,
           "line": 6,
           "endLine": 11,
-          "text": "# agenthub-relay: delegating to other agents\n\nYou are the planner. Executors run in their own git worktrees; your working tree changes only when you call `relay_apply`. This works the same whichever agent plans: Claude Code, Codex, DeepSeek Harness or Antigravity.\n\nDo not delegate when you are yourself an executor (`AGENTHUB_RELAY_ROLE=executor`; `relay_dispatch` refuses), when you cannot state the task precisely, or when explaining it costs more than doing it.\n"
+          "text": "# agenthub-relay: delegating to other agents\n\nYou are the planner. Executors run in their own git worktrees; your working tree changes only when you apply a job. This works the same whichever agent plans: Claude Code, Codex, DeepSeek Harness or Antigravity.\n\nDo not delegate when you are yourself an executor (`AGENTHUB_RELAY_ROLE=executor`; dispatch refuses), when you cannot state the task precisely, or when explaining it costs more than doing it.\n"
         },
         {
           "id": "source-7bb41a60ccd5329c-s2",
-          "title": "1. Split",
+          "title": "How to call the relay",
           "level": 2,
           "line": 12,
-          "endLine": 16,
-          "text": "## 1. Split\n\n- Hand off pieces that are independent of each other and of what you are doing. Keep design decisions, cross-cutting changes and integration for yourself.\n- Give concurrent write jobs disjoint scopes. A write job holds its scope until it ends, and a completed one until you apply or discard it; an overlapping dispatch is refused.\n"
+          "endLine": 33,
+          "text": "## How to call the relay\n\nRun the bundled script with Node.js 20 or newer from the repository you are working in:\n\n```sh\nnode <this skill's directory>/scripts/cli.mjs <command> --planner <you>\n```\n\n`<you>` is `claude`, `codex`, `dsh` or `agy`: say who you are on every command (or set `AGENTHUB_RELAY_PLANNER`). It picks the profile meant for your kind of planner, so that, for example, a Codex planner's deep work goes to Claude Code instead of back to Codex. Every command prints JSON; exit code 1 means the relay refused (read `error.code` and `error.message`), 2 means the command was malformed.\n\nIf the `relay_*` MCP tools are loaded (the Claude Code plugin loads them), you may use them instead; they do the same thing and record the same jobs.\n\n| Command | Tool |\n|---|---|\n| `agents` | `relay_agents` |\n| `dispatch --tier <t> --task-file - [--scope <p>]... [--check <c>]... [--executor <id>] [--model <m>] [--effort <e>] [--title <s>] [--acceptance <s>]` (task on stdin) | `relay_dispatch` |\n| `wait [<id>...] [--timeout <s>]` | `relay_wait` |\n| `result <id>` | `relay_result` |\n| `apply <id> [--allow-out-of-scope] [--force]`, `discard <id>`, `cancel <id>` | `relay_apply`, `relay_discard`, `relay_cancel` |\n| `status [<id>] [--json]` | `relay_status` |\n| `config show`, `config set <key> <value> [--user]`, `config unset <key> [--user]` | (script only) |\n"
         },
         {
           "id": "source-7bb41a60ccd5329c-s3",
-          "title": "2. Pick a tier",
+          "title": "1. Who executes, and with which model",
           "level": 2,
-          "line": 17,
-          "endLine": 26,
-          "text": "## 2. Pick a tier\n\n| Tier | For | Required | Default executor (`thread16`) |\n|---|---|---|---|\n| `deep` | complex or multi-file work that needs reasoning | `scope` (`\".\"` for the whole repository) | `codex` |\n| `light` | simple, clearly specified, mechanical work | 1-10 `scope` paths and at least one check | `dsh` (DeepSeek V4 Flash) |\n| `review` | read-only investigation or a second opinion | nothing; any change is reported out of scope | `claude` |\n\n`relay_agents` shows the active profile and which executors are installed. Set `executor` only for a reason, such as escalating a failed light job to `codex`.\n"
+          "line": 34,
+          "endLine": 41,
+          "text": "## 1. Who executes, and with which model\n\n- The first time you use the relay in a project, run `config show`. If it still shows the built-in defaults, tell the user which executor and model each tier goes to and ask once whether to keep that.\n- When the user names an executor, model or effort for a piece of work (\"give this to Claude Opus\"), pass `--executor`, `--model` and `--effort` on that dispatch only.\n- Save a choice with `config set` only when the user asks for it to stick (\"from now on, light work uses …\"). Say what you will write before you write it. Tier values are `executor[:model][@effort]`, for example `config set profiles.thread16.deep claude:opus@high`; `--user` saves it for every project.\n- An executor that has no flag for a model refuses one with `model-unsupported` (DeepSeek Harness sets its model in its own settings). Tell the user; do not retry with another model.\n- You cannot change your own model from here. If the user wants a different planner model, point them to their host (in Claude Code, `/model`).\n"
         },
         {
           "id": "source-7bb41a60ccd5329c-s4",
-          "title": "3. Write the task",
+          "title": "2. Split",
           "level": 2,
-          "line": 27,
-          "endLine": 38,
-          "text": "## 3. Write the task\n\nThe executor sees only your task and the repository at the base commit (tracked changes included; untracked files are not, and dispatch warns about them). Write it so a capable engineer new to the code could finish it:\n\n- the goal and why, in a sentence or two;\n- the files, symbols and conventions that matter;\n- constraints: what must not change, interfaces to keep;\n- `acceptance`: what done looks like;\n- `checks`: shell commands that exit 0 only when the work is right. They run in the job's worktree after the executor finishes; prefer focused tests to a slow full suite.\n\nNever put secrets in a task. Executors receive credentials only by variable name (`passEnv` in `.agenthub/config.json`).\n"
+          "line": 42,
+          "endLine": 46,
+          "text": "## 2. Split\n\n- Hand off pieces that are independent of each other and of what you are doing. Keep design decisions, cross-cutting changes and integration for yourself.\n- Give concurrent write jobs disjoint scopes. A write job holds its scope until it ends, and a completed one until you apply or discard it; an overlapping dispatch is refused.\n"
         },
         {
           "id": "source-7bb41a60ccd5329c-s5",
-          "title": "4. Wait",
+          "title": "3. Pick a tier",
           "level": 2,
-          "line": 39,
-          "endLine": 43,
-          "text": "## 4. Wait\n\n- If the `relay_dispatch` result says `watcher.active: true`, end your turn: the watcher (the Claude Code mod) wakes you when a job ends, and keeps your prompt cache warm while you wait.\n- Otherwise call `relay_wait` (it returns within 50 seconds), doing other useful work between calls, until a job finishes.\n"
+          "line": 47,
+          "endLine": 56,
+          "text": "## 3. Pick a tier\n\n| Tier | For | Required | Default executor (`thread16` / `codex-planner`) |\n|---|---|---|---|\n| `deep` | complex or multi-file work that needs reasoning | `scope` (`\".\"` for the whole repository) | `codex` / `claude` |\n| `light` | simple, clearly specified, mechanical work | 1-10 `scope` paths and at least one check | `dsh` (DeepSeek V4 Flash) |\n| `review` | read-only investigation or a second opinion | nothing; any change is reported out of scope | `claude` / `codex` |\n\n`agents` shows the active profile, why it was chosen, and which executors are installed.\n"
         },
         {
           "id": "source-7bb41a60ccd5329c-s6",
-          "title": "5. Review and integrate",
+          "title": "4. Write the task",
           "level": 2,
-          "line": 44,
-          "endLine": 52,
-          "text": "## 5. Review and integrate\n\n1. `relay_result`: summary, checks, changed files, out-of-scope files, patch stat and log paths. Read the patch (`logs.patch`) for anything that is not trivial.\n2. If it is right, `relay_apply`. The changes land unstaged in your working tree; review and commit them as your own. Out-of-scope changes need `allowOutOfScope: true`, and only after you have read them; a failed or cancelled job needs `force: true`.\n3. Otherwise `relay_discard`, then improve the task or move it up a tier and dispatch again.\n4. `relay_cancel` stops a job you no longer need.\n\nA completed job is not proof: \"checks passed\" covers only what the checks test, and a job without checks is unverified.\n"
+          "line": 57,
+          "endLine": 68,
+          "text": "## 4. Write the task\n\nThe executor sees only your task and the repository at the base commit (tracked changes included; untracked files are not, and dispatch warns about them). Write it so a capable engineer new to the code could finish it:\n\n- the goal and why, in a sentence or two;\n- the files, symbols and conventions that matter;\n- constraints: what must not change, interfaces to keep;\n- `acceptance`: what done looks like;\n- `checks`: shell commands that exit 0 only when the work is right. They run in the job's worktree after the executor finishes; prefer focused tests to a slow full suite.\n\nPass the task on stdin (`--task-file -`) to avoid shell quoting. Never put secrets in a task. Executors receive credentials only by variable name (`passEnv` in `.agenthub/config.json`, edited by hand).\n"
         },
         {
           "id": "source-7bb41a60ccd5329c-s7",
+          "title": "5. Wait",
+          "level": 2,
+          "line": 69,
+          "endLine": 73,
+          "text": "## 5. Wait\n\n- With the relay_* MCP tools in Claude Code: if the dispatch result says `watcher.active: true`, end your turn; the Claude Code mod wakes you when a job ends and keeps your prompt cache warm meanwhile.\n- Otherwise run `wait` (50 seconds by default; `--timeout` up to 3600 if your shell allows long commands), doing other useful work between calls, until a job finishes.\n"
+        },
+        {
+          "id": "source-7bb41a60ccd5329c-s8",
+          "title": "6. Review and integrate",
+          "level": 2,
+          "line": 74,
+          "endLine": 82,
+          "text": "## 6. Review and integrate\n\n1. `result <id>`: summary, model, checks, changed files, out-of-scope files, patch stat and log paths. Read the patch (`logs.patch`) for anything that is not trivial.\n2. If it is right, `apply <id>`. The changes land unstaged in your working tree; review and commit them as your own. Out-of-scope changes need `--allow-out-of-scope`, and only after you have read them; a failed or cancelled job needs `--force`.\n3. Otherwise `discard <id>`, then improve the task or move it up a tier and dispatch again.\n4. `cancel <id>` stops a job you no longer need.\n\nA completed job is not proof: \"checks passed\" covers only what the checks test, and a job without checks is unverified.\n"
+        },
+        {
+          "id": "source-7bb41a60ccd5329c-s9",
           "title": "With Birdview",
           "level": 2,
-          "line": 53,
-          "endLine": 55,
-          "text": "## With Birdview\n\nWhen Birdview is active for the task, confirm Birdview's displayed plan before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation."
+          "line": 83,
+          "endLine": 85,
+          "text": "## With Birdview\n\nWhen Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation."
+        }
+      ],
+      "history": {
+        "complete": true,
+        "version": 2,
+        "lastEdited": "2026-10-29T20:17:57+08:00",
+        "commit": "fdfcfa366916f6cdbcd16bfbc8ec25d0ecbd8cc1"
+      }
+    },
+    {
+      "id": "source-e4291a20d0d5f255",
+      "path": "skills/relay-config/SKILL.md",
+      "kind": "skill",
+      "scope": null,
+      "discoveredFrom": null,
+      "applicability": "unreviewed",
+      "text": "---\nname: relay-config\ndescription: Show or change which agent and model each agenthub-relay tier uses, and which profile each planner gets. Use only when the user invokes relay-config.\ndisable-model-invocation: true\n---\n\n# relay-config: who executes, with which model\n\nThis thin entry uses the agenthub-relay skill in the sibling `../agenthub-relay` directory; run its script as `node ../agenthub-relay/scripts/cli.mjs`.\n\n1. Run `config show --planner <you>` and explain it plainly: who is taken to be planning, the active profile and why, and for each tier (deep, light, review) the executor, model and effort. Mention executors that are not installed.\n2. Turn what the user wants into settings:\n   - a tier: `profiles.<profile>.<tier>` with a value `executor[:model][@effort]`, for example `claude:opus@high` or `dsh`;\n   - an executor's default model or effort: `executors.<codex|claude|dsh>.model` or `.effort`;\n   - which profile a planner gets: `plannerProfiles.<claude|codex|dsh|agy>`; the default profile: `profile`.\n   Use `--user` when the user wants the setting for every project; otherwise it is saved in this repository's `.agenthub/config.json`.\n3. Say exactly what you will write and where, and wait for the user to agree. Then run `config set <key> <value>` (or `config unset <key>`) and show `config show` again.\n\nDeepSeek Harness has no documented flag for choosing a model: the relay refuses a model for it, and its model is set in DeepSeek Harness's own settings. Credentials (`passEnv`) are not settable here; they are edited by hand and hold variable names only. This skill cannot change the planner's own model; in Claude Code that is `/model`.",
+      "sections": [
+        {
+          "id": "source-e4291a20d0d5f255-s1",
+          "title": "relay-config: who executes, with which model",
+          "level": 1,
+          "line": 7,
+          "endLine": 19,
+          "text": "# relay-config: who executes, with which model\n\nThis thin entry uses the agenthub-relay skill in the sibling `../agenthub-relay` directory; run its script as `node ../agenthub-relay/scripts/cli.mjs`.\n\n1. Run `config show --planner <you>` and explain it plainly: who is taken to be planning, the active profile and why, and for each tier (deep, light, review) the executor, model and effort. Mention executors that are not installed.\n2. Turn what the user wants into settings:\n   - a tier: `profiles.<profile>.<tier>` with a value `executor[:model][@effort]`, for example `claude:opus@high` or `dsh`;\n   - an executor's default model or effort: `executors.<codex|claude|dsh>.model` or `.effort`;\n   - which profile a planner gets: `plannerProfiles.<claude|codex|dsh|agy>`; the default profile: `profile`.\n   Use `--user` when the user wants the setting for every project; otherwise it is saved in this repository's `.agenthub/config.json`.\n3. Say exactly what you will write and where, and wait for the user to agree. Then run `config set <key> <value>` (or `config unset <key>`) and show `config show` again.\n\nDeepSeek Harness has no documented flag for choosing a model: the relay refuses a model for it, and its model is set in DeepSeek Harness's own settings. Credentials (`passEnv`) are not settable here; they are edited by hand and hold variable names only. This skill cannot change the planner's own model; in Claude Code that is `/model`."
         }
       ],
       "history": {
         "complete": true,
         "version": 1,
-        "lastEdited": "2026-10-29T14:06:40+08:00",
-        "commit": "a17441ddcf8d19a1510ee7122cf606e7958d1c9a"
+        "lastEdited": "2026-10-29T20:17:57+08:00",
+        "commit": "fdfcfa366916f6cdbcd16bfbc8ec25d0ecbd8cc1"
+      }
+    },
+    {
+      "id": "source-0ce50be52a5ef572",
+      "path": "skills/relay-review/SKILL.md",
+      "kind": "skill",
+      "scope": null,
+      "discoveredFrom": null,
+      "applicability": "unreviewed",
+      "text": "---\nname: relay-review\ndescription: Ask another agent (Codex, Claude Code or DeepSeek Harness) for a read-only second opinion on a diff, a bug or a design through agenthub-relay. Use only when the user invokes relay-review; it never changes files and does not review architecture.\ndisable-model-invocation: true\n---\n\n# relay-review: a second opinion from another agent\n\nThis thin entry uses the agenthub-relay skill in the sibling `../agenthub-relay` directory; read its SKILL.md for the commands and for `--planner`.\n\n1. Write the question as a self-contained review task: what to look at (files, a diff, a failing test), what to look for, and what form the answer should take.\n2. Dispatch one `review` tier job: `node ../agenthub-relay/scripts/cli.mjs dispatch --tier review --task-file - --planner <you>`, adding `--executor`, `--model` or `--effort` when the user named them.\n3. Wait for it, read `result`, and report its findings next to your own, saying where you agree and where you do not.\n\nA review job is read-only: any change it makes is reported out of scope and is never applied. Discard the job when you are done with it.\n\nWhen the user asks for an architecture review, birdview-review owns the report; offer this second opinion as an input to that one review instead of producing a separate report.",
+      "sections": [
+        {
+          "id": "source-0ce50be52a5ef572-s1",
+          "title": "relay-review: a second opinion from another agent",
+          "level": 1,
+          "line": 7,
+          "endLine": 17,
+          "text": "# relay-review: a second opinion from another agent\n\nThis thin entry uses the agenthub-relay skill in the sibling `../agenthub-relay` directory; read its SKILL.md for the commands and for `--planner`.\n\n1. Write the question as a self-contained review task: what to look at (files, a diff, a failing test), what to look for, and what form the answer should take.\n2. Dispatch one `review` tier job: `node ../agenthub-relay/scripts/cli.mjs dispatch --tier review --task-file - --planner <you>`, adding `--executor`, `--model` or `--effort` when the user named them.\n3. Wait for it, read `result`, and report its findings next to your own, saying where you agree and where you do not.\n\nA review job is read-only: any change it makes is reported out of scope and is never applied. Discard the job when you are done with it.\n\nWhen the user asks for an architecture review, birdview-review owns the report; offer this second opinion as an input to that one review instead of producing a separate report."
+        }
+      ],
+      "history": {
+        "complete": true,
+        "version": 1,
+        "lastEdited": "2026-10-29T20:17:57+08:00",
+        "commit": "fdfcfa366916f6cdbcd16bfbc8ec25d0ecbd8cc1"
+      }
+    },
+    {
+      "id": "source-aa1e5050a360bfc5",
+      "path": "skills/relay-status/SKILL.md",
+      "kind": "skill",
+      "scope": null,
+      "discoveredFrom": null,
+      "applicability": "unreviewed",
+      "text": "---\nname: relay-status\ndescription: Show agenthub-relay jobs in this repository and help decide whether to apply, discard or cancel each one. Use only when the user invokes relay-status.\ndisable-model-invocation: true\n---\n\n# relay-status: jobs and what to do with them\n\nThis thin entry uses the agenthub-relay skill in the sibling `../agenthub-relay` directory; read its SKILL.md for the commands and for `--planner`.\n\n1. Run `node ../agenthub-relay/scripts/cli.mjs status --json --planner <you>` and list each job: tier, executor and model, status, verification and title.\n2. For each finished job not yet applied or discarded, run `result <id>` and recommend apply or discard with reasons: checks, out-of-scope files, the summary and, when it matters, the patch.\n3. Run `apply`, `discard` or `cancel` only after the user says which.\n\nWhen Birdview is active, apply only jobs that belong to the plan the user confirmed, and record the edit in Birdview's activity before applying; a job outside that plan needs an updated plan and a new confirmation first.",
+      "sections": [
+        {
+          "id": "source-aa1e5050a360bfc5-s1",
+          "title": "relay-status: jobs and what to do with them",
+          "level": 1,
+          "line": 7,
+          "endLine": 15,
+          "text": "# relay-status: jobs and what to do with them\n\nThis thin entry uses the agenthub-relay skill in the sibling `../agenthub-relay` directory; read its SKILL.md for the commands and for `--planner`.\n\n1. Run `node ../agenthub-relay/scripts/cli.mjs status --json --planner <you>` and list each job: tier, executor and model, status, verification and title.\n2. For each finished job not yet applied or discarded, run `result <id>` and recommend apply or discard with reasons: checks, out-of-scope files, the summary and, when it matters, the patch.\n3. Run `apply`, `discard` or `cancel` only after the user says which.\n\nWhen Birdview is active, apply only jobs that belong to the plan the user confirmed, and record the edit in Birdview's activity before applying; a job outside that plan needs an updated plan and a new confirmation first."
+        }
+      ],
+      "history": {
+        "complete": true,
+        "version": 1,
+        "lastEdited": "2026-10-29T20:17:57+08:00",
+        "commit": "fdfcfa366916f6cdbcd16bfbc8ec25d0ecbd8cc1"
       }
     },
     {
@@ -211,7 +405,7 @@
       "scope": null,
       "discoveredFrom": "AGENTS.md",
       "applicability": "unreviewed",
-      "text": "# agenthub-relay 设计（v0.1，拟实现）\n\n状态：v0.1 已实现（2026-10-29）。本文是最初的设计说明，地图第 3 版以它为证据；第 4 版起，地图证据改为源码行号。实现时对设计的调整记录在第 12 节。\n\n## 1. 背景与目标\n\n来源是 linux.do 话题《CC 消耗 Token 太快了，除了开 Pro 有别的办法么？》可见第 16 楼（post #19）的思路：用 paseo、bb、lody、t3、Synara 这类已实现各家 agent 互调的工具，让 Claude Code 当主调度，复杂任务交给 Codex，简单明确的任务交给 DeepSeek V4 Flash，再写一个 mod，让 Claude Code 在等待其他 agent 时每 55 分钟保活缓存。\n\nagenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具接任何规划者，对下用各家官方的无人值守模式驱动执行者。目标是让规划者只花少量 token 做拆分、派发和验收，把实现性的 token 消耗转给更便宜或已付费的执行者。\n\n## 2. 思路核对结论\n\n1. 互调可行：所列工具都提供让一个 agent 启动另一个 agent 的接口（CLI、MCP 或 ACP），但没有一个原生覆盖本项目要接的全部四家，因此 v0.1 自建 hub。\n2. DeepSeek 的官方模型名现为 `deepseek-flash`，旧名 `deepseek-v4-flash` 仍被接受并路由到同一模型。\n3. 55 分钟保活只在 Claude Code 主会话缓存 TTL 为 1 小时时有效。订阅额度内默认 1 小时；API key、超额计费和云厂商默认 5 分钟，需要设置 `CLAUDE_CODE_PROMPT_CACHE_TTL=1h` 或 `promptCacheTtl`。\n4. \"mods\" 是 Claude Code 2.1.287 起默认开启的功能。保活用 `$.model.fork`：它按主会话上一次请求原样发送并读取缓存前缀，不向对话追加轮次。\n\n## 3. 角色模型\n\n规划者和执行者不固定。任何能加载 MCP 服务的 agent 都可以当规划者：Claude Code、Codex、DeepSeek Harness、Antigravity。执行者由档位映射决定，v0.1 实现 Claude Code、Codex、DeepSeek Harness 三家，Antigravity 只在配置里预留。\n\n档位（tier）描述任务性质，不描述代理：\n\n| 档位 | 含义 | 默认执行者（16 楼档位） | 护栏 |\n|---|---|---|---|\n| deep | 复杂、多文件、需要推理的实现或排错 | codex | 必须声明范围 |\n| light | 简单且明确的机械性任务 | dsh（DeepSeek Harness，`deepseek-flash`） | 必须声明文件范围和至少一条检查命令 |\n| review | 只读审查或调研 | claude | 只读，任何改动都记为越界 |\n\n档位到执行者的映射按配置里的 profile 切换，例如以 Codex 为规划者时可把 deep 映射到 claude。\n\n## 4. 模块\n\n| id | 职责 | 计划路径 |\n|---|---|---|\n| planner-surface | MCP 工具面与 CLI，是所有规划者的唯一入口，不假设规划者身份 | `src/mcp.mjs` `src/tools.mjs` `src/cli.mjs` |\n| dispatch-policy | 档位映射、light 档护栏、并发写范围冲突锁、预留代理失败关闭、执行者禁止再派发 | `src/policy.mjs` `src/config.mjs` |\n| job-store | 任务记录与状态机、事件日志、原子写、心跳存活检测 | `src/store.mjs` |\n| git-isolation | 每个任务一个 git worktree、基线提交、变更清单、越界审计、补丁应用与丢弃 | `src/git.mjs` |\n| executor-adapters | 三家执行者的命令构造与输出解析，agy 与 ACP 预留 | `src/executors.mjs` |\n| worker-runner | 分离进程中的 worker：超时与取消、运行检查、收尾 | `src/worker.mjs` `src/checks.mjs` |\n| claude-planner-mod | Claude Code 规划者专用 mod：保活、任务结束唤醒、`/relay` 命令、状态行 | `hooks/` `types/` `.claude-plugin/` `.mcp.json` |\n| relay-skill | 可移植的路由手册（Agent Skills 标准），教规划者拆分、选档、写任务、等待和验收 | `skills/agenthub-relay/SKILL.md` |\n\n外部模块：planner-hosts（任一 MCP 客户端规划者）、executor-clis（codex、claude、dsh；agy 预留）、anthropic-cache（Claude 主会话提示缓存）。\n\n## 5. 关系\n\n- 规划者调用 planner-surface 的 `relay_*` 工具。\n- planner-surface 先让 dispatch-policy 校验档位、范围与冲突；dispatch-policy 读取 job-store 中活跃任务的范围声明。\n- planner-surface 在 job-store 建记录，经 git-isolation 建 worktree，再以分离进程启动 worker-runner。\n- worker-runner 通过 executor-adapters 调用 executor-clis，从 git-isolation 取变更清单做越界审计，把状态迁移、心跳和结果写回 job-store。\n- claude-planner-mod 通过 `$.mcp.call` 查询任务状态，用 `$.model.fork` 刷新主会话缓存，任务结束时用 `$.prompt.submit` 唤醒 Claude Code。\n\n## 6. 任务生命周期\n\n状态：`queued` → `running` → `verifying` → `completed` | `failed` | `cancelled`；集成状态另记 `none` | `applied` | `discarded`。\n\n1. 派发：校验护栏后取基线提交（主工作区有未提交改动时用 `git stash create` 的快照提交），在 `.agenthub/worktrees/<job>` 建分支 `agenthub/<job>`。\n2. 运行：worker 以 `AGENTHUB_RELAY_ROLE=executor` 启动执行者，每 30 秒写心跳；超时或取消时按进程组终止。\n3. 检查：在 worktree 里逐条运行检查命令，退出码 0 为 passed，非 0 为 failed，未运行为 not-run；任何一条失败则任务为 failed，没有检查则报告为未验证。\n4. 审计：对比基线列出改动文件，范围外的文件列为越界。\n5. 集成：规划者看过 `relay_result` 后调用 `relay_apply`（先 `git apply --check`）或 `relay_discard`。\n\n## 7. MCP 工具\n\n| 工具 | 作用 |\n|---|---|\n| `relay_agents` | 列出执行者、可用性、当前 profile 的档位映射和预留项 |\n| `relay_dispatch` | 按档位或指定执行者派发任务，返回任务 id、worktree 与基线提交 |\n| `relay_status` | 查询一个或全部任务的状态 |\n| `relay_wait` | 最多等待 50 秒，任一任务结束即返回，供没有 mod 的规划者使用 |\n| `relay_result` | 摘要、改动文件、越界文件、检查结果和日志路径 |\n| `relay_apply` | 把任务补丁应用到主工作区 |\n| `relay_discard` | 删除任务 worktree 与分支 |\n| `relay_cancel` | 终止运行中的任务 |\n\n## 8. 执行者适配\n\n| 执行者 | 调用方式 | 输出 |\n|---|---|---|\n| codex | `codex exec --json --sandbox workspace-write -o <最终消息文件> -`，任务从 stdin 传入 | JSONL 事件，最终消息写入文件 |\n| claude | `claude -p --output-format json --permission-mode acceptEdits --permission-prompts none`，检查命令加入 `--allowedTools` | JSON 中的 `result` 与用量 |\n| dsh | `dsh --profile headless \"<任务>\"` | stdout 为最后一条回答，完成退出码 0，否则 1 |\n| agy | 预留，派发时报错 | — |\n\n执行者只继承 PATH、HOME、语言设置和配置里列出的变量名；密钥值不进入任何记录。\n\n## 9. Claude Code 保活 mod\n\n- 计时起点是主会话最后一次模型请求的开始时间，因为缓存寿命从读写缓存的请求开始算。\n- 条件：保活开启、有任务在运行、主会话空闲、距上次请求或上次 fork 达到间隔（默认 55 分钟），且距今仍在 60 分钟内（缓存仍热）；超过上限（默认距最后一次真实请求 8 小时）停止。\n- 动作：`$.model.fork` 发一个只要求回复 OK 的问题；记录 `cache_read_input_tokens`。读到 0 且写入很大说明缓存已过期（多半是 5 分钟 TTL），此时暂停保活并提示设置 1 小时 TTL。\n- 唤醒：任务进入终态时用 `$.prompt.submit` 发一条提示，引导规划者调用 `relay_result`。\n- 空闲压缩：Claude Code 在 1 小时 TTL 下可能于缓存到期前自动压缩空闲会话；mod 记录这类压缩事件，便于判断 fork 是否重置了该计时。\n\n经济性：1 小时缓存写入是基础输入价的 2 倍，读取是 0.1 倍（Opus 5.5 与 Sonnet 5.5 为 0.05 倍），所以在约 18 到 36 小时的等待内保活都比重新写入便宜；默认上限 8 小时。\n\n## 10. 安全与隔离\n\n- 执行者只在自己的 worktree 写；主工作区只经 `relay_apply` 改变。\n- 并发写任务的范围按目录前缀判断，重叠即拒绝。\n- 执行者环境带 `AGENTHUB_RELAY_ROLE=executor`，此时 hub 拒绝再派发，mod 自停，防止递归。\n- 范围声明和越界审计是事后核对，不是文件系统写锁。\n\n## 11. 路线图\n\n- v0.2：通用 ACP 执行器（Claude 经 `claude-agent-acp`、Codex 经 `codex-acp`、dsh 原生 `--profile acp`、agy 官方 ACP server），之后可把 Paseo、bb、Lody 作为可选后端。\n- Antigravity headless 适配器（`agy -p --output-format json`）。\n\n## 12. 实现与设计的差异（v0.1）\n\n1. MCP 服务内联写在 `.claude-plugin/plugin.json` 的 `mcpServers`，不建根目录 `.mcp.json`：否则用 Claude Code 打开本仓库时，它会被当成项目级 MCP 服务，而 `${CLAUDE_PLUGIN_ROOT}` 在那里无法展开。\n2. 观察者（`relay_status` 的 `watch: true`）记在 MCP 服务进程的内存里，不写盘：从未派发过任务的仓库不会多出 `.agenthub/`，多个规划者共用一个仓库时也不会把别人的观察者当成自己的。\n3. 取消一律经由 worker 完成：发送 SIGTERM，worker 启动时和每次心跳时也会检查取消标记；worker 已不在时，存活检测把任务对账为 cancelled，而不是 worker-lost。\n4. `passEnv` 变量的值在执行者与检查的输出、日志、`final.md` 和存储的补丁里都替换为 `[redacted]`，跨输出块也能识别；执行者把密钥写进仓库文件时，任务会给出警告。\n5. light 档的范围不能是整个仓库（`.`）；已完成但尚未 apply 或 discard 的写任务继续占用它的范围。\n6. 插件选项键名为 `keep_alive`、`interval_minutes`、`ceiling_hours`、`wake_on_finish`；mod 只为本会话盯过（见过正在运行）的任务发唤醒。\n\n## 来源\n\n- [linux.do 话题 3028918](https://linux.do/t/topic/3028918)\n- [Claude Code：How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching.md)\n- [Claude Code：Mods overview](https://code.claude.com/docs/en/plugins/mods/overview.md)\n- [Claude API：Prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)\n- [Claude Code：Run Claude Code programmatically](https://code.claude.com/docs/en/headless.md)\n- [Codex：Non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)\n- [DeepSeek：V4 Flash 更新](https://api-docs.deepseek.com/news/v4-flash)\n- [DeepSeek Harness headless README](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/bundle/headless/README.md)\n- [Antigravity CLI：Headless mode](https://antigravity.google/docs/cli/headless/)\n- [Agent Client Protocol：Agents](https://agentclientprotocol.com/get-started/agents)",
+      "text": "# agenthub-relay 设计（v0.1，拟实现）\n\n状态：v0.1 已实现（2026-10-29）。本文是最初的设计说明，地图第 3 版以它为证据；第 4 版起，地图证据改为源码行号。实现时对设计的调整记录在第 12 节。\n\n## 1. 背景与目标\n\n来源是 linux.do 话题《CC 消耗 Token 太快了，除了开 Pro 有别的办法么？》可见第 16 楼（post #19）的思路：用 paseo、bb、lody、t3、Synara 这类已实现各家 agent 互调的工具，让 Claude Code 当主调度，复杂任务交给 Codex，简单明确的任务交给 DeepSeek V4 Flash，再写一个 mod，让 Claude Code 在等待其他 agent 时每 55 分钟保活缓存。\n\nagenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具接任何规划者，对下用各家官方的无人值守模式驱动执行者。目标是让规划者只花少量 token 做拆分、派发和验收，把实现性的 token 消耗转给更便宜或已付费的执行者。\n\n## 2. 思路核对结论\n\n1. 互调可行：所列工具都提供让一个 agent 启动另一个 agent 的接口（CLI、MCP 或 ACP），但没有一个原生覆盖本项目要接的全部四家，因此 v0.1 自建 hub。\n2. DeepSeek 的官方模型名现为 `deepseek-flash`，旧名 `deepseek-v4-flash` 仍被接受并路由到同一模型。\n3. 55 分钟保活只在 Claude Code 主会话缓存 TTL 为 1 小时时有效。订阅额度内默认 1 小时；API key、超额计费和云厂商默认 5 分钟，需要设置 `CLAUDE_CODE_PROMPT_CACHE_TTL=1h` 或 `promptCacheTtl`。\n4. \"mods\" 是 Claude Code 2.1.287 起默认开启的功能。保活用 `$.model.fork`：它按主会话上一次请求原样发送并读取缓存前缀，不向对话追加轮次。\n\n## 3. 角色模型\n\n规划者和执行者不固定。任何能加载 MCP 服务的 agent 都可以当规划者：Claude Code、Codex、DeepSeek Harness、Antigravity。执行者由档位映射决定，v0.1 实现 Claude Code、Codex、DeepSeek Harness 三家，Antigravity 只在配置里预留。\n\n档位（tier）描述任务性质，不描述代理：\n\n| 档位 | 含义 | 默认执行者（16 楼档位） | 护栏 |\n|---|---|---|---|\n| deep | 复杂、多文件、需要推理的实现或排错 | codex | 必须声明范围 |\n| light | 简单且明确的机械性任务 | dsh（DeepSeek Harness，`deepseek-flash`） | 必须声明文件范围和至少一条检查命令 |\n| review | 只读审查或调研 | claude | 只读，任何改动都记为越界 |\n\n档位到执行者的映射按配置里的 profile 切换，例如以 Codex 为规划者时可把 deep 映射到 claude。\n\n## 4. 模块\n\n| id | 职责 | 计划路径 |\n|---|---|---|\n| planner-surface | MCP 工具面与 CLI，是所有规划者的唯一入口，不假设规划者身份 | `src/mcp.mjs` `src/tools.mjs` `src/cli.mjs` |\n| dispatch-policy | 档位映射、light 档护栏、并发写范围冲突锁、预留代理失败关闭、执行者禁止再派发 | `src/policy.mjs` `src/config.mjs` |\n| job-store | 任务记录与状态机、事件日志、原子写、心跳存活检测 | `src/store.mjs` |\n| git-isolation | 每个任务一个 git worktree、基线提交、变更清单、越界审计、补丁应用与丢弃 | `src/git.mjs` |\n| executor-adapters | 三家执行者的命令构造与输出解析，agy 与 ACP 预留 | `src/executors.mjs` |\n| worker-runner | 分离进程中的 worker：超时与取消、运行检查、收尾 | `src/worker.mjs` `src/checks.mjs` |\n| claude-planner-mod | Claude Code 规划者专用 mod：保活、任务结束唤醒、`/relay` 命令、状态行 | `hooks/` `types/` `.claude-plugin/` `.mcp.json` |\n| relay-skill | 可移植的路由手册（Agent Skills 标准），教规划者拆分、选档、写任务、等待和验收 | `skills/agenthub-relay/SKILL.md` |\n\n外部模块：planner-hosts（任一 MCP 客户端规划者）、executor-clis（codex、claude、dsh；agy 预留）、anthropic-cache（Claude 主会话提示缓存）。\n\n## 5. 关系\n\n- 规划者调用 planner-surface 的 `relay_*` 工具。\n- planner-surface 先让 dispatch-policy 校验档位、范围与冲突；dispatch-policy 读取 job-store 中活跃任务的范围声明。\n- planner-surface 在 job-store 建记录，经 git-isolation 建 worktree，再以分离进程启动 worker-runner。\n- worker-runner 通过 executor-adapters 调用 executor-clis，从 git-isolation 取变更清单做越界审计，把状态迁移、心跳和结果写回 job-store。\n- claude-planner-mod 通过 `$.mcp.call` 查询任务状态，用 `$.model.fork` 刷新主会话缓存，任务结束时用 `$.prompt.submit` 唤醒 Claude Code。\n\n## 6. 任务生命周期\n\n状态：`queued` → `running` → `verifying` → `completed` | `failed` | `cancelled`；集成状态另记 `none` | `applied` | `discarded`。\n\n1. 派发：校验护栏后取基线提交（主工作区有未提交改动时用 `git stash create` 的快照提交），在 `.agenthub/worktrees/<job>` 建分支 `agenthub/<job>`。\n2. 运行：worker 以 `AGENTHUB_RELAY_ROLE=executor` 启动执行者，每 30 秒写心跳；超时或取消时按进程组终止。\n3. 检查：在 worktree 里逐条运行检查命令，退出码 0 为 passed，非 0 为 failed，未运行为 not-run；任何一条失败则任务为 failed，没有检查则报告为未验证。\n4. 审计：对比基线列出改动文件，范围外的文件列为越界。\n5. 集成：规划者看过 `relay_result` 后调用 `relay_apply`（先 `git apply --check`）或 `relay_discard`。\n\n## 7. MCP 工具\n\n| 工具 | 作用 |\n|---|---|\n| `relay_agents` | 列出执行者、可用性、当前 profile 的档位映射和预留项 |\n| `relay_dispatch` | 按档位或指定执行者派发任务，返回任务 id、worktree 与基线提交 |\n| `relay_status` | 查询一个或全部任务的状态 |\n| `relay_wait` | 最多等待 50 秒，任一任务结束即返回，供没有 mod 的规划者使用 |\n| `relay_result` | 摘要、改动文件、越界文件、检查结果和日志路径 |\n| `relay_apply` | 把任务补丁应用到主工作区 |\n| `relay_discard` | 删除任务 worktree 与分支 |\n| `relay_cancel` | 终止运行中的任务 |\n\n## 8. 执行者适配\n\n| 执行者 | 调用方式 | 输出 |\n|---|---|---|\n| codex | `codex exec --json --sandbox workspace-write -o <最终消息文件> -`，任务从 stdin 传入 | JSONL 事件，最终消息写入文件 |\n| claude | `claude -p --output-format json --permission-mode acceptEdits --permission-prompts none`，检查命令加入 `--allowedTools` | JSON 中的 `result` 与用量 |\n| dsh | `dsh --profile headless \"<任务>\"` | stdout 为最后一条回答，完成退出码 0，否则 1 |\n| agy | 预留，派发时报错 | — |\n\n执行者只继承 PATH、HOME、语言设置和配置里列出的变量名；密钥值不进入任何记录。\n\n## 9. Claude Code 保活 mod\n\n- 计时起点是主会话最后一次模型请求的开始时间，因为缓存寿命从读写缓存的请求开始算。\n- 条件：保活开启、有任务在运行、主会话空闲、距上次请求或上次 fork 达到间隔（默认 55 分钟），且距今仍在 60 分钟内（缓存仍热）；超过上限（默认距最后一次真实请求 8 小时）停止。\n- 动作：`$.model.fork` 发一个只要求回复 OK 的问题；记录 `cache_read_input_tokens`。读到 0 且写入很大说明缓存已过期（多半是 5 分钟 TTL），此时暂停保活并提示设置 1 小时 TTL。\n- 唤醒：任务进入终态时用 `$.prompt.submit` 发一条提示，引导规划者调用 `relay_result`。\n- 空闲压缩：Claude Code 在 1 小时 TTL 下可能于缓存到期前自动压缩空闲会话；mod 记录这类压缩事件，便于判断 fork 是否重置了该计时。\n\n经济性：1 小时缓存写入是基础输入价的 2 倍，读取是 0.1 倍（Opus 5.5 与 Sonnet 5.5 为 0.05 倍），所以在约 18 到 36 小时的等待内保活都比重新写入便宜；默认上限 8 小时。\n\n## 10. 安全与隔离\n\n- 执行者只在自己的 worktree 写；主工作区只经 `relay_apply` 改变。\n- 并发写任务的范围按目录前缀判断，重叠即拒绝。\n- 执行者环境带 `AGENTHUB_RELAY_ROLE=executor`，此时 hub 拒绝再派发，mod 自停，防止递归。\n- 范围声明和越界审计是事后核对，不是文件系统写锁。\n\n## 11. 路线图\n\n- 之后：通用 ACP 执行器（Claude 经 `claude-agent-acp`、Codex 经 `codex-acp`、dsh 原生 `--profile acp`、agy 官方 ACP server），之后可把 Paseo、bb、Lody 作为可选后端。\n- Antigravity headless 适配器（`agy -p --output-format json`）。\n\n## 12. 实现与设计的差异（v0.1）\n\n1. MCP 服务内联写在 `.claude-plugin/plugin.json` 的 `mcpServers`，不建根目录 `.mcp.json`：否则用 Claude Code 打开本仓库时，它会被当成项目级 MCP 服务，而 `${CLAUDE_PLUGIN_ROOT}` 在那里无法展开。\n2. 观察者（`relay_status` 的 `watch: true`）记在 MCP 服务进程的内存里，不写盘：从未派发过任务的仓库不会多出 `.agenthub/`，多个规划者共用一个仓库时也不会把别人的观察者当成自己的。\n3. 取消一律经由 worker 完成：发送 SIGTERM，worker 启动时和每次心跳时也会检查取消标记；worker 已不在时，存活检测把任务对账为 cancelled，而不是 worker-lost。\n4. `passEnv` 变量的值在执行者与检查的输出、日志、`final.md` 和存储的补丁里都替换为 `[redacted]`，跨输出块也能识别；执行者把密钥写进仓库文件时，任务会给出警告。\n5. light 档的范围不能是整个仓库（`.`）；已完成但尚未 apply 或 discard 的写任务继续占用它的范围。\n6. 插件选项键名为 `keep_alive`、`interval_minutes`、`ceiling_hours`、`wake_on_finish`；mod 只为本会话盯过（见过正在运行）的任务发唤醒。\n\n## 13. v0.2：skill 自带脚本，在使用中选择规划者、执行者与模型\n\n起因是第 2 轮架构评审的候选 skill-cli，以及“skill 没法设置模型、也没法决定谁规划谁执行”的反馈。\n\n1. **CLI 走完全流程**：`agents`、`dispatch`、`wait`、`result`、`apply`、`discard`、`cancel`、`status`、`config` 都经 `createRelay().call()`，与 MCP 共用同一套派发顺序和记录；JSON 输出，退出码 0/1/2。`createRelay` 的 `maxWaitSeconds` 让 MCP 保持 50 秒、CLI 最长 3600 秒。\n2. **skill 自带 hub**：`skills/agenthub-relay/scripts/` 是 `src/` 的生成副本（`npm run bundle:skill`），复制整个 skill 目录即可使用，测试保证副本与源码一致。`src/` 仍是唯一源码。\n3. **规划者身份**：`--planner`、`AGENTHUB_RELAY_PLANNER` 或 MCP 客户端名识别出 claude、codex、dsh、agy 或 unknown，写进任务记录。profile 的选取顺序：`AGENTHUB_RELAY_PROFILE` → 配置里的 `plannerProfiles` → 配置里的 `profile` → 内置的规划者默认（codex → `codex-planner`）→ `thread16`。hub 仍不假设谁在规划，身份只用来选 profile。\n4. **模型与推理强度**：档位映射可写 `{executor, model, effort}`，执行者有默认 `model`/`effort` 与参数模板 `modelArgs`/`effortArgs`。单个任务的取值：请求 → 档位映射（仅当执行者相同）→ 执行者默认。没有对应参数的执行者（dsh）以 `model-unsupported`/`effort-unsupported` 失败关闭，不静默忽略。\n5. **设置**：用户级文件在下、项目级文件在上；`config set/unset` 只开放 profile、plannerProfiles、档位路由和执行者的 model/effort/command/timeoutMinutes，写前校验，原子替换；`passEnv` 仍只能手改。执行者角色不能改设置。\n6. **入口**：`relay-review`、`relay-status`、`relay-config` 三个只能显式调用的薄入口，共用同一脚本；Birdview 启用时 relay-status 只 apply 已确认计划内的任务。\n7. 规划者自身的模型由宿主决定，不在本项目范围内。\n\n## 来源\n\n- [linux.do 话题 3028918](https://linux.do/t/topic/3028918)\n- [Claude Code：How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching.md)\n- [Claude Code：Mods overview](https://code.claude.com/docs/en/plugins/mods/overview.md)\n- [Claude API：Prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)\n- [Claude Code：Run Claude Code programmatically](https://code.claude.com/docs/en/headless.md)\n- [Codex：Non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)\n- [DeepSeek：V4 Flash 更新](https://api-docs.deepseek.com/news/v4-flash)\n- [DeepSeek Harness headless README](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/bundle/headless/README.md)\n- [Antigravity CLI：Headless mode](https://antigravity.google/docs/cli/headless/)\n- [Agent Client Protocol：Agents](https://agentclientprotocol.com/get-started/agents)",
       "sections": [
         {
           "id": "source-b0929dacd4f1fc19-s1",
@@ -307,7 +501,7 @@
           "level": 2,
           "line": 106,
           "endLine": 110,
-          "text": "## 11. 路线图\n\n- v0.2：通用 ACP 执行器（Claude 经 `claude-agent-acp`、Codex 经 `codex-acp`、dsh 原生 `--profile acp`、agy 官方 ACP server），之后可把 Paseo、bb、Lody 作为可选后端。\n- Antigravity headless 适配器（`agy -p --output-format json`）。\n"
+          "text": "## 11. 路线图\n\n- 之后：通用 ACP 执行器（Claude 经 `claude-agent-acp`、Codex 经 `codex-acp`、dsh 原生 `--profile acp`、agy 官方 ACP server），之后可把 Paseo、bb、Lody 作为可选后端。\n- Antigravity headless 适配器（`agy -p --output-format json`）。\n"
         },
         {
           "id": "source-b0929dacd4f1fc19-s13",
@@ -319,18 +513,26 @@
         },
         {
           "id": "source-b0929dacd4f1fc19-s14",
-          "title": "来源",
+          "title": "13. v0.2：skill 自带脚本，在使用中选择规划者、执行者与模型",
           "level": 2,
           "line": 120,
           "endLine": 131,
+          "text": "## 13. v0.2：skill 自带脚本，在使用中选择规划者、执行者与模型\n\n起因是第 2 轮架构评审的候选 skill-cli，以及“skill 没法设置模型、也没法决定谁规划谁执行”的反馈。\n\n1. **CLI 走完全流程**：`agents`、`dispatch`、`wait`、`result`、`apply`、`discard`、`cancel`、`status`、`config` 都经 `createRelay().call()`，与 MCP 共用同一套派发顺序和记录；JSON 输出，退出码 0/1/2。`createRelay` 的 `maxWaitSeconds` 让 MCP 保持 50 秒、CLI 最长 3600 秒。\n2. **skill 自带 hub**：`skills/agenthub-relay/scripts/` 是 `src/` 的生成副本（`npm run bundle:skill`），复制整个 skill 目录即可使用，测试保证副本与源码一致。`src/` 仍是唯一源码。\n3. **规划者身份**：`--planner`、`AGENTHUB_RELAY_PLANNER` 或 MCP 客户端名识别出 claude、codex、dsh、agy 或 unknown，写进任务记录。profile 的选取顺序：`AGENTHUB_RELAY_PROFILE` → 配置里的 `plannerProfiles` → 配置里的 `profile` → 内置的规划者默认（codex → `codex-planner`）→ `thread16`。hub 仍不假设谁在规划，身份只用来选 profile。\n4. **模型与推理强度**：档位映射可写 `{executor, model, effort}`，执行者有默认 `model`/`effort` 与参数模板 `modelArgs`/`effortArgs`。单个任务的取值：请求 → 档位映射（仅当执行者相同）→ 执行者默认。没有对应参数的执行者（dsh）以 `model-unsupported`/`effort-unsupported` 失败关闭，不静默忽略。\n5. **设置**：用户级文件在下、项目级文件在上；`config set/unset` 只开放 profile、plannerProfiles、档位路由和执行者的 model/effort/command/timeoutMinutes，写前校验，原子替换；`passEnv` 仍只能手改。执行者角色不能改设置。\n6. **入口**：`relay-review`、`relay-status`、`relay-config` 三个只能显式调用的薄入口，共用同一脚本；Birdview 启用时 relay-status 只 apply 已确认计划内的任务。\n7. 规划者自身的模型由宿主决定，不在本项目范围内。\n"
+        },
+        {
+          "id": "source-b0929dacd4f1fc19-s15",
+          "title": "来源",
+          "level": 2,
+          "line": 132,
+          "endLine": 143,
           "text": "## 来源\n\n- [linux.do 话题 3028918](https://linux.do/t/topic/3028918)\n- [Claude Code：How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching.md)\n- [Claude Code：Mods overview](https://code.claude.com/docs/en/plugins/mods/overview.md)\n- [Claude API：Prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)\n- [Claude Code：Run Claude Code programmatically](https://code.claude.com/docs/en/headless.md)\n- [Codex：Non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)\n- [DeepSeek：V4 Flash 更新](https://api-docs.deepseek.com/news/v4-flash)\n- [DeepSeek Harness headless README](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/bundle/headless/README.md)\n- [Antigravity CLI：Headless mode](https://antigravity.google/docs/cli/headless/)\n- [Agent Client Protocol：Agents](https://agentclientprotocol.com/get-started/agents)"
         }
       ],
       "history": {
         "complete": true,
-        "version": 2,
-        "lastEdited": "2026-10-29T14:18:34+08:00",
-        "commit": "c6e75a03f71214c82f2878e9f8cf6f3fc383356d"
+        "version": 3,
+        "lastEdited": "2026-10-29T20:20:22+08:00",
+        "commit": "6830d4d638d207bb78e9bb6f064bbe669da5a179"
       }
     }
   ]
