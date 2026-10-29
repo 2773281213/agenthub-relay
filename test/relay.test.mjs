@@ -484,6 +484,29 @@ describe('relay tools (real worker processes)', () => {
     }
   });
 
+  test('on Windows cancel sends no signal: the worker reads the flag and ends the job cancelled', async () => {
+    const { dir, cleanup } = makeRepo();
+    try {
+      useFakeExecutors(dir);
+      const env = { ...process.env, AGENTHUB_RELAY_ROOT: dir };
+      delete env.AGENTHUB_RELAY_ROLE;
+      const relay = createRelay({ cwd: dir, env, platform: 'win32' });
+      const pidFile = path.join(dir, '..', `${path.basename(dir)}-grandchild.pid`);
+      const { jobId } = await relay.call('relay_dispatch', { tier: 'deep', scope: ['src'], task: fakeTask({ spawnChild: pidFile, sleepMs: 60_000 }) });
+      await waitFor(() => fs.existsSync(pidFile), { what: 'the executor to start' });
+      const worker = JSON.parse(fs.readFileSync(path.join(dir, '.agenthub', 'jobs', jobId, 'job.json'), 'utf8')).worker.pid;
+      const cancelled = await relay.call('relay_cancel', { jobId });
+      assert.equal(cancelled.cancelling, true);
+      assert.ok(isAlive(worker), 'the worker was not signalled');
+      await waitFor(async () => (await relay.call('relay_status', { jobId })).job.status === 'cancelled', { timeoutMs: 15_000, what: 'the cancel flag to be read' });
+      const grandchild = Number(fs.readFileSync(pidFile, 'utf8'));
+      await waitFor(() => !isAlive(grandchild), { what: "the executor's tree to end" });
+      fs.rmSync(pidFile, { force: true });
+    } finally {
+      cleanup();
+    }
+  });
+
   test('a planner-side watcher polling relay_status is reported to the planner', async () => {
     const { dir, cleanup } = makeRepo();
     try {

@@ -12,6 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { configLayers, configPath, loadConfig, PLANNER_IDS, plannerFromName, SETTABLE_KEYS, userConfigPath, writeSetting } from './config.mjs';
 import { describeExecutors } from './executors.mjs';
+import { resolveCommand } from './platform.mjs';
 import { serveMcp } from './mcp.mjs';
 import { createStore, TERMINAL } from './store.mjs';
 import { createRelay, resolveRoot, VERSION } from './tools.mjs';
@@ -249,15 +250,22 @@ async function config(args) {
   throw new UsageError('config show | config set <key> <value> | config unset <key>');
 }
 
-function versionOf(path) {
-  const run = spawnSync(path, ['--version'], { encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'] });
+function versionOf(command) {
+  let resolved;
+  try {
+    resolved = resolveCommand(command, { env: process.env });
+  } catch {
+    return undefined;
+  }
+  if (!resolved) return undefined;
+  const run = spawnSync(resolved.file, [...resolved.prefixArgs, '--version'], { encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   if (run.error || run.status !== 0) return undefined;
   return run.stdout.trim().split('\n')[0] || undefined;
 }
 
 async function doctor(args) {
   const { values } = parse(args, { json: { type: 'boolean' } });
-  const report = { version: VERSION, node: process.version };
+  const report = { version: VERSION, node: process.version, platform: process.platform };
   try {
     report.root = await resolveRoot(process.cwd(), process.env);
   } catch (err) {
@@ -271,7 +279,7 @@ async function doctor(args) {
     report.profileReason = settings.profileReason;
     report.mapping = settings.mapping;
     report.executors = describeExecutors(settings, process.env).map(entry =>
-      entry.available ? { ...entry, version: versionOf(entry.path) } : entry,
+      entry.available ? { ...entry, version: versionOf(entry.command) } : entry,
     );
   } catch (err) {
     report.configError = err.message;
@@ -281,7 +289,7 @@ async function doctor(args) {
     print(report);
     return 0;
   }
-  const lines = [`agenthub-relay ${VERSION} on Node ${process.version}`];
+  const lines = [`agenthub-relay ${VERSION} on Node ${process.version} (${process.platform})`];
   lines.push(report.root ? `repository: ${report.root}` : `repository: none (${report.rootError})`);
   if (report.configError) {
     lines.push(`configuration error: ${report.configError}`);
@@ -291,7 +299,8 @@ async function doctor(args) {
     for (const entry of report.executors) {
       const tiers = entry.tiers.length ? ` [${entry.tiers.join(', ')}]` : '';
       if (entry.reserved) lines.push(`  ${entry.id.padEnd(7)} reserved   ${entry.reason}${tiers}`);
-      else if (entry.available) lines.push(`  ${entry.id.padEnd(7)} available  ${entry.path}${entry.version ? `  ${entry.version}` : ''}${tiers}`);
+      else if (entry.available) lines.push(`  ${entry.id.padEnd(7)} available  ${entry.path}${entry.via === 'direct' ? '' : ` (${entry.via})`}${entry.version ? `  ${entry.version}` : ''}${tiers}`);
+      else if (entry.problem) lines.push(`  ${entry.id.padEnd(7)} unusable   ${entry.problem}${tiers}`);
       else lines.push(`  ${entry.id.padEnd(7)} missing    "${entry.command}" is not on PATH${tiers}`);
     }
   }

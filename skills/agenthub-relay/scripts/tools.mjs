@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig, plannerFromName, TIERS } from './config.mjs';
 import { describeExecutors } from './executors.mjs';
 import { addWorktree, applyPatch, ensureExcluded, removeWorktree, repoRoot, snapshotBase } from './git.mjs';
+import { workerSpawnOptions } from './platform.mjs';
 import { planDispatch } from './policy.mjs';
 import { createStore, isAlive, isJobId, newJobId, TERMINAL } from './store.mjs';
 
@@ -124,7 +125,7 @@ export function startWorkerProcess(root, jobId, env, workerLog) {
     const child = spawn(process.execPath, [CLI, 'worker', jobId], {
       cwd: root,
       env: { ...env, AGENTHUB_RELAY_ROOT: root },
-      detached: true,
+      ...workerSpawnOptions(),
       stdio: ['ignore', log, log],
     });
     child.unref();
@@ -183,6 +184,7 @@ function sleep(ms, signal) {
  * @param {Function} [options.clientName] () => the MCP client's name; it identifies the planner when nothing else does
  * @param {string} [options.planner] the planner's id, as given on the command line
  * @param {number} [options.maxWaitSeconds] the longest relay_wait (MCP clients time out tool calls)
+ * @param {string} [options.platform] process.platform; on Windows relay_cancel sends no signal
  */
 export function createRelay({
   cwd = process.cwd(),
@@ -191,6 +193,7 @@ export function createRelay({
   clientName = () => 'unknown',
   planner,
   maxWaitSeconds = MAX_WAIT_SECONDS,
+  platform = process.platform,
 } = {}) {
   let rootPromise;
   let watcherSeenAt;
@@ -443,6 +446,12 @@ export function createRelay({
         draft.cancelRequested = true;
       });
       const pid = flagged.worker?.pid;
+      // On Windows a signal would end the worker at once, before it can stop
+      // its executor's tree and record the outcome: the flag alone is enough,
+      // since the worker reads it every second.
+      if (pid && isAlive(pid) && platform === 'win32') {
+        return { jobId: job.id, cancelling: true, note: 'The worker sees the request within a second, stops the executor and ends the job cancelled.' };
+      }
       if (pid && isAlive(pid)) {
         try {
           process.kill(pid, 'SIGTERM');
