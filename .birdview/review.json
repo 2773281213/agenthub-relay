@@ -1,12 +1,12 @@
 {
  "schemaVersion": "2",
  "project": "agenthub-relay",
- "revision": "2026-10-29-arch-review-2",
- "sourceRevision": "481f29791b043bbc9b29c79bcba07e2c91fa8393",
+ "revision": "2026-11-03-arch-review-3",
+ "sourceRevision": "0d7e1173c11849fe03e51522a3e997b6c7a28db2",
  "workingTree": {
   "dirty": []
  },
- "baseline": "评估“封装为 skill 等更易用形式”的提议；上一轮的两个候选仍有效，其中“派发步骤写在工具层”被并入本轮的 skill-cli。",
+ "baseline": "评审 v0.3 计划“指定规划者和三档执行者，读取、核对并填入模型”在架构上的落点；上一轮的 skill-cli 已实现，installer 候选仍未做。",
  "sources": [
   {
    "kind": "rule",
@@ -22,681 +22,304 @@
   },
   {
    "kind": "doc",
-   "path": "skills/agenthub-relay/SKILL.md"
-  },
-  {
-   "kind": "doc",
-   "path": "README.md"
+   "path": "skills/relay-config/SKILL.md"
   }
  ],
  "architectureBinding": {
   "mapId": "agenthub-relay-system",
-  "revision": 5
+  "revision": 7
  },
- "scope": "只评估使用与分发方式：skill、CLI、MCP、安装。检查了 src/cli.mjs、src/tools.mjs、src/policy.mjs、skills/agenthub-relay/SKILL.md、docs/planners.md、.claude-plugin/plugin.json；执行与隔离逻辑不在本轮范围。",
+ "scope": "只评估模型知识与规划者身份放在哪里：检查了 src/config.mjs、src/policy.mjs、src/tools.mjs、src/cli.mjs、src/executors.mjs、skills/relay-config/SKILL.md。执行、隔离与 worker 不在本轮范围。",
  "gaps": [
-  "Codex、dsh、Antigravity 读取 skill 的目录来自 Birdview 安装文档与 Google 的 Antigravity codelab，没有在真实宿主上验证。",
-  "拆分出的多个入口 skill 是否会与 birdview-review 等技能抢触发，由兼容性体检单独评估。"
+  "codex app-server 的 model/list、claude 的模型别名与 dsh 的 agent-default-model 来自官方文档，没有在真实 CLI 上调用验证；dsh --dump-config 的输出格式未知。",
+  "写入各家配置是否与它们自身的热加载冲突（例如正在运行的会话覆盖文件）未验证。"
  ],
  "language": "zh",
  "recommendation": {
-  "candidate": "skill-cli",
-  "reason": "它是更易用形式的前提：有了能派发的 CLI，skill 才能脱离 MCP 配置；顺带完成上一轮的派发步骤收拢，并让 CLI 与 relay_status 共用一份输出契约。安装命令放在它之后。"
+  "candidate": "model-catalog",
+  "reason": "获取、核对、填入模型都依赖它，且需要一个独立模块承担与三家 CLI 和配置文件打交道的复杂度；planner-designation 改动小，依赖同一个 roles set 入口，两者在同一轮实现。"
  },
  "candidates": [
   {
-   "id": "skill-cli",
-   "title": "skill 离不开手写的 MCP 配置",
-   "lede": "路由 skill 只会调用 relay_* MCP 工具，派发步骤只写在 MCP 处理函数里，CLI 不能派发；除 Claude Code 插件外，每家规划者都得先手工注册 MCP 服务才能用。",
-   "impact": "Codex、DeepSeek Harness、Antigravity 的用户要按文档逐家写 MCP 配置，dsh 的配置文件位置连文档都没写；配不好 skill 就用不了。等待也受 MCP 客户端超时限制，只能 50 秒一轮。",
+   "id": "model-catalog",
+   "title": "模型写错要等任务跑起来才发现",
+   "lede": "relay 对模型只检查字符格式：不知道各家实际有哪些模型、默认用哪个，dsh 因为没有按次选模型的参数被一律拒绝，规划者自己的模型只能到各家程序里手改。",
+   "impact": "把 codex 的模型名写错、给某个模型配了它不支持的推理强度，要等任务启动后才失败，白白占一个 worktree 和一次等待；想让 dsh 换模型、或统一规划者与执行者的模型，只能自己去翻三家不同格式的配置文件。",
    "strength": "strong",
-   "dependency": "in-process",
+   "dependency": "local-substitutable",
    "modules": [
-    "relay-skill",
-    "planner-surface",
     "dispatch-policy",
-    "job-store",
-    "git-isolation",
-    "worker-runner"
+    "executor-adapters",
+    "planner-surface",
+    "executor-clis",
+    "planner-hosts"
    ],
    "evidence": [
     {
-     "path": "skills/agenthub-relay/SKILL.md",
+     "path": "src/config.mjs",
      "lines": {
-      "start": 3,
-      "end": 3
-     },
-     "quote": "description: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) through the agenthub-relay relay_* MCP tools - split the work, pick a tier, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when the relay_* tools are available and part of a task can be done by another agent in parallel or more cheaply.",
-     "note": "skill 只认 relay_* MCP 工具",
-     "symbol": "description"
-    },
-    {
-     "path": "src/cli.mjs",
-     "lines": {
-      "start": 20,
-      "end": 23
-     },
-     "quote": "  agenthub-relay mcp            Serve the relay_* tools over stdio for any MCP client\n  agenthub-relay doctor [--json] Show the repository, profile and installed executors\n  agenthub-relay status [--json] List jobs in this repository\n  agenthub-relay worker <jobId> Run one job (relay_dispatch starts this for you)",
-     "note": "CLI 没有派发、等待、取结果",
-     "symbol": "HELP"
-    },
-    {
-     "path": "docs/planners.md",
-     "lines": {
-      "start": 32,
+      "start": 31,
       "end": 32
      },
-     "quote": "codex mcp add agenthub-relay -- node /absolute/path/to/agenthub-relay/src/cli.mjs mcp",
-     "note": "Codex 要手工注册 MCP"
+     "quote": "/** Model and effort names: no spaces or shell syntax, at most 100 characters. */\nexport const MODEL_NAME = /^[A-Za-z0-9._:/@+-]{1,100}$/;",
+     "note": "只检查字符，不知道有哪些模型",
+     "symbol": "MODEL_NAME"
     },
     {
-     "path": "docs/planners.md",
+     "path": "src/config.mjs",
      "lines": {
-      "start": 49,
-      "end": 49
+      "start": 55,
+      "end": 56
      },
-     "quote": "DeepSeek Harness ships an MCP client with no server enabled by default; it treats each server command as trusted code that runs outside its sandbox. Its public documentation that we checked does not show the configuration file, so add a stdio server named `agenthub-relay` with command `node` and arguments `/absolute/path/to/agenthub-relay/src/cli.mjs mcp` through dsh's own MCP settings.",
-     "note": "dsh 的配置位置文档里没有"
-    },
-    {
-     "path": "src/tools.mjs",
-     "lines": {
-      "start": 229,
-      "end": 235
-     },
-     "quote": "      return store.withDispatchLock(async () => {\n        const jobs = await listJobs(store);\n        const plan = planDispatch({ request: args, config, jobs, role: env.AGENTHUB_RELAY_ROLE });\n        const base = await snapshotBase(r);\n        await ensureExcluded(r);\n        const id = newJobId();\n        const { dir, branch } = await addWorktree(r, id, base.commit);",
-     "note": "派发步骤只在 MCP 处理函数里",
-     "symbol": "relay_dispatch"
+     "quote": "    // dsh documents no per-run model flag: its model is set in its own settings.\n    dsh: { command: 'dsh', passEnv: [], timeoutMinutes: 30, extraArgs: [], modelArgs: [], effortArgs: [] },",
+     "note": "dsh 的模型在它自己的设置里",
+     "symbol": "DEFAULT_CONFIG"
     },
     {
      "path": "src/policy.mjs",
      "lines": {
-      "start": 112,
-      "end": 116
+      "start": 108,
+      "end": 126
      },
-     "quote": "  if (role === 'executor') {\n    throw new PolicyError(\n      'executor-role',\n      'This process runs as an agenthub-relay executor (AGENTHUB_RELAY_ROLE=executor); executors may not dispatch further jobs.',\n    );",
-     "note": "执行者护栏在策略层，可复用",
-     "symbol": "planDispatch"
+     "quote": "function selectModel({ request, route, executor, executorConfig }) {\n  const fromRoute = route?.executor === executor ? route : {};\n  const model = cleanName(request.model, 'model') ?? fromRoute.model ?? executorConfig.model;\n  const effort = cleanName(request.effort, 'effort') ?? fromRoute.effort ?? executorConfig.effort;\n  if (model !== undefined && !executorConfig.modelArgs?.length) {\n    throw new PolicyError(\n      'model-unsupported',\n      `The ${executor} executor has no documented flag for choosing a model; set its model in ${executor}'s own settings, or configure executors.${executor}.modelArgs`,\n      { executor, model },\n    );\n  }\n  if (effort !== undefined && !executorConfig.effortArgs?.length) {\n    throw new PolicyError(\n      'effort-unsupported',\n      `The ${executor} executor has no flag for reasoning effort; configure executors.${executor}.effortArgs to use one`,\n      { executor, effort },\n    );\n  }\n  return { model, effort };",
+     "note": "按有无参数模板一刀切",
+     "symbol": "selectModel"
     },
     {
-     "path": "src/tools.mjs",
+     "path": "src/executors.mjs",
      "lines": {
-      "start": 16,
-      "end": 16
+      "start": 253,
+      "end": 256
      },
-     "quote": "export const MAX_WAIT_SECONDS = 50;",
-     "note": "等待受 MCP 客户端超时限制",
-     "symbol": "MAX_WAIT_SECONDS"
+     "quote": "      model: cfg.model,\n      effort: cfg.effort,\n      choosesModel: (cfg.modelArgs ?? []).length > 0,\n      choosesEffort: (cfg.effortArgs ?? []).length > 0,",
+     "note": "只报配置值，看不到各家默认",
+     "symbol": "describeExecutors"
+    },
+    {
+     "path": "skills/relay-config/SKILL.md",
+     "lines": {
+      "start": 19,
+      "end": 19
+     },
+     "quote": "DeepSeek Harness has no documented flag for choosing a model: the relay refuses a model for it, and its model is set in DeepSeek Harness's own settings. Credentials (`passEnv`) are not settable here; they are edited by hand and hold variable names only. This skill cannot change the planner's own model; in Claude Code that is `/model`.",
+     "note": "规划者的模型改不了"
+    },
+    {
+     "path": "src/config.mjs",
+     "lines": {
+      "start": 379,
+      "end": 379
+     },
+     "quote": "  { pattern: /^executors\\.([a-z]+)\\.(model|effort|command)$/, parse: value => value },",
+     "note": "写入模型时不核对",
+     "symbol": "SETTABLE"
     }
    ],
    "before": {
-    "caption": "除 Claude Code 插件外，规划者先要手写 MCP 配置；skill 只会调 MCP 工具，CLI 不能派发。",
+    "caption": "模型名只过格式检查；写错、强度不支持、dsh 默认不对，都要到运行时才暴露，规划者的模型得手改。",
     "nodes": [
      {
-      "id": "planners",
-      "label": "Codex / dsh / Antigravity",
+      "id": "user",
+      "label": "用户 / 规划者",
       "kind": "caller",
-      "row": 1,
-      "column": 1,
-      "modules": [
-       "planner-hosts"
-      ],
-      "evidence": []
-     },
-     {
-      "id": "claude",
-      "label": "Claude Code 插件",
-      "kind": "caller",
-      "row": 1,
-      "column": 2,
-      "modules": [
-       "claude-planner-mod"
-      ],
-      "evidence": []
-     },
-     {
-      "id": "skill",
-      "label": "路由 skill（只认 MCP）",
-      "kind": "module",
-      "row": 1,
-      "column": 3,
-      "modules": [
-       "relay-skill"
-      ],
-      "evidence": [
-       0
-      ]
-     },
-     {
-      "id": "config",
-      "label": "逐家手写 MCP 配置",
-      "kind": "step",
-      "row": 2,
-      "column": 1,
-      "modules": [
-       "planner-hosts"
-      ],
-      "evidence": [
-       2,
-       3
-      ]
-     },
-     {
-      "id": "cli",
-      "label": "CLI：只有 doctor/status",
-      "kind": "module",
-      "row": 2,
-      "column": 3,
-      "modules": [
-       "planner-surface"
-      ],
-      "evidence": [
-       1
-      ]
-     },
-     {
-      "id": "mcp",
-      "label": "MCP 服务 relay_*",
-      "kind": "module",
-      "row": 3,
-      "column": 1,
+      "row": 0,
+      "column": 0,
       "span": 2,
       "modules": [
-       "planner-surface"
+       "planner-hosts"
       ],
-      "evidence": [
-       4,
-       6
-      ]
+      "evidence": []
      },
      {
-      "id": "tools",
-      "label": "工具层里的派发步骤",
+      "id": "hostedit",
+      "label": "手改各家设置文件",
       "kind": "step",
-      "row": 4,
-      "column": 1,
+      "row": 0,
+      "column": 2,
       "modules": [
-       "planner-surface"
+       "planner-hosts"
       ],
       "evidence": [
        4
       ]
      },
      {
-      "id": "policy",
-      "label": "planDispatch + 执行者护栏",
-      "kind": "step",
-      "row": 4,
-      "column": 2,
+      "id": "config",
+      "label": "config set：只查格式",
+      "kind": "module",
+      "row": 1,
+      "column": 0,
       "modules": [
        "dispatch-policy"
       ],
       "evidence": [
+       0,
        5
       ]
-     }
-    ],
-    "edges": [
-     {
-      "from": "planners",
-      "to": "config"
      },
      {
-      "from": "config",
-      "to": "mcp"
-     },
-     {
-      "from": "claude",
-      "to": "mcp",
-      "label": "插件自动接线"
-     },
-     {
-      "from": "skill",
-      "to": "mcp",
-      "label": "只调 relay_*"
-     },
-     {
-      "from": "mcp",
-      "to": "tools"
-     },
-     {
-      "from": "tools",
-      "to": "policy"
-     }
-    ]
-   },
-   "after": {
-    "caption": "skill 包自带脚本，任何能跑 shell 的规划者读手册后用 CLI 派发；MCP 变成可选入口，两条路共用同一个任务生命周期。",
-    "nodes": [
-     {
-      "id": "planners",
-      "label": "任何能跑 shell 的规划者",
-      "kind": "caller",
-      "row": 1,
-      "column": 1,
-      "modules": [
-       "planner-hosts"
-      ],
-      "evidence": []
-     },
-     {
-      "id": "claude",
-      "label": "Claude Code 插件",
-      "kind": "caller",
-      "row": 1,
-      "column": 2,
-      "modules": [
-       "claude-planner-mod"
-      ],
-      "evidence": []
-     },
-     {
-      "id": "skillpkg",
-      "label": "skill 包（含脚本）",
-      "kind": "deep",
-      "row": 2,
-      "column": 1,
-      "modules": [
-       "relay-skill"
-      ],
-      "evidence": [],
-      "absorbs": [
-       "skill",
-       "config"
-      ]
-     },
-     {
-      "id": "cli",
-      "label": "CLI 全流程命令",
+      "id": "describe",
+      "label": "agents：只显示配置值",
       "kind": "module",
-      "row": 3,
-      "column": 1,
-      "modules": [
-       "planner-surface"
-      ],
-      "evidence": []
-     },
-     {
-      "id": "mcp",
-      "label": "MCP 服务（可选）",
-      "kind": "module",
-      "row": 3,
-      "column": 2,
-      "modules": [
-       "planner-surface"
-      ],
-      "evidence": []
-     },
-     {
-      "id": "jobs",
-      "label": "任务生命周期 jobs.mjs",
-      "kind": "deep",
-      "row": 4,
-      "column": 1,
-      "span": 2,
-      "modules": [
-       "planner-surface",
-       "job-store",
-       "git-isolation",
-       "worker-runner"
-      ],
-      "evidence": [],
-      "absorbs": [
-       "tools"
-      ]
-     },
-     {
-      "id": "policy",
-      "label": "planDispatch + 执行者护栏",
-      "kind": "step",
-      "row": 5,
-      "column": 1,
-      "modules": [
-       "dispatch-policy"
-      ],
-      "evidence": []
-     }
-    ],
-    "edges": [
-     {
-      "from": "planners",
-      "to": "skillpkg",
-      "label": "读手册"
-     },
-     {
-      "from": "skillpkg",
-      "to": "cli",
-      "label": "运行脚本"
-     },
-     {
-      "from": "claude",
-      "to": "mcp",
-      "label": "插件接线"
-     },
-     {
-      "from": "cli",
-      "to": "jobs"
-     },
-     {
-      "from": "mcp",
-      "to": "jobs"
-     },
-     {
-      "from": "jobs",
-      "to": "policy"
-     }
-    ],
-    "seams": [
-     {
-      "label": "同一份 JSON 输出",
-      "below": "jobs"
-     }
-    ]
-   },
-   "findings": [
-    {
-     "id": "f-mcp-only",
-     "kind": "leak",
-     "note": "skill 绑死 MCP",
-     "targets": [
-      "skill"
-     ],
-     "evidence": [
-      0,
-      2,
-      3
-     ],
-     "confidence": "observed",
-     "detail": "SKILL.md 的描述写明通过 relay_* MCP 工具工作，并且只在这些工具可用时触发；规划者没配好 MCP，skill 就没有可用的动作。Codex 要 codex mcp add，dsh 的配置文件位置文档里没有写，安装负担落在每个用户身上。"
-    },
-    {
-     "id": "f-no-cli",
-     "kind": "missing-seam",
-     "note": "CLI 不能派发",
-     "targets": [
-      "cli",
-      "tools"
-     ],
-     "evidence": [
-      1,
-      4
-     ],
-     "confidence": "observed",
-     "detail": "CLI 只有 mcp、worker、doctor、status；派发、等待、取结果、apply 的步骤只写在 MCP 处理函数里。能跑 shell 的 agent 本可以直接调用命令，现在却必须经过 MCP。"
-    },
-    {
-     "id": "f-wait-cap",
-     "kind": "leak",
-     "note": "等待受超时限制",
-     "targets": [
-      "mcp"
-     ],
-     "evidence": [
-      6
-     ],
-     "confidence": "observed",
-     "detail": "relay_wait 每次最多 50 秒，是为了躲开 Codex 默认 60 秒的工具超时；这是 MCP 客户端的限制漏进了接口。命令行等待可以按 shell 的超时设置更长的时长。"
-    }
-   ],
-   "callerKnowledge": {
-    "before": [
-     "先写 MCP 配置",
-     "各家配置位置",
-     "relay_* 工具名",
-     "50 秒轮询等待"
-    ],
-    "after": [
-     "装 skill",
-     "跑脚本"
-    ]
-   },
-   "solution": "把派发、等待、取结果、apply、discard、cancel 收进 jobs.mjs；CLI 补齐这些命令并输出与 relay_status 相同的 JSON；skill 包自带脚本，SKILL.md 改为先用 CLI、MCP 可选。",
-   "deletionTest": {
-    "verdict": "narrow",
-    "text": "MCP 服务不删：Claude Code 插件和偏好工具调用的规划者仍用它；它退化为 jobs.mjs 之上的薄层，复杂度集中到生命周期模块，而不是转给调用方。"
-   },
-   "wins": [
-    {
-     "kind": "leverage",
-     "text": "能跑 shell 的规划者装上 skill 就能用，不写 MCP 配置"
-    },
-    {
-     "kind": "locality",
-     "text": "派发顺序与清理只写在 jobs.mjs 一处"
-    },
-    {
-     "kind": "testability",
-     "text": "CLI 全流程可以直接用 node --test 驱动"
-    }
-   ],
-   "verification": [
-    "用 CLI 完成 dispatch→wait→result→apply，结果与 MCP 路径的记录一致",
-    "AGENTHUB_RELAY_ROLE=executor 时 CLI dispatch 同样被拒",
-    "现有 49 项 node 测试与 10 项 mod 测试不改断言仍通过"
-   ],
-   "boundaries": [
-    "relay_* 工具的名称与参数",
-    "job.json 的字段",
-    "Claude Code 插件与 mod 的行为",
-    "零运行时依赖"
-   ],
-   "cost": "中等：新增 jobs.mjs（约 150 行从 tools.mjs 移入）、6 个 CLI 命令及测试、SKILL.md 改写；长任务描述要走文件或 stdin，避开命令行长度与转义问题。"
-  },
-  {
-   "id": "installer",
-   "title": "每家规划者都要照文档手工安装",
-   "lede": "安装说明按 Claude Code、Codex、dsh、Antigravity 分四段，各写一遍复制 skill、注册 MCP 的步骤；只有 Claude Code 插件能自动接线。",
-   "impact": "换一个规划者就要重读一段文档、手改一个配置文件，路径写错或漏装 skill 时没有任何提示；也容易在共享目录和专属目录各装一份，造成重名。",
-   "strength": "worth-exploring",
-   "dependency": "local-substitutable",
-   "modules": [
-    "planner-surface",
-    "relay-skill",
-    "planner-hosts"
-   ],
-   "evidence": [
-    {
-     "path": "docs/planners.md",
-     "lines": {
-      "start": 43,
-      "end": 43
-     },
-     "quote": "Codex's default `tool_timeout_sec` is 60, which `relay_wait` respects. For the routing skill, install `skills/agenthub-relay` where your Codex setup reads skills; the third-party skills CLI does this: `npx skills add 2773281213/agenthub-relay --skill agenthub-relay`.",
-     "note": "Codex 的 skill 靠第三方 CLI 安装"
-    },
-    {
-     "path": "docs/planners.md",
-     "lines": {
-      "start": 51,
-      "end": 51
-     },
-     "quote": "Skills: copy `skills/agenthub-relay` into `~/.dsh/skills/` or the project's `.dsh/skills/`.",
-     "note": "dsh 的 skill 要手工复制"
-    },
-    {
-     "path": "docs/planners.md",
-     "lines": {
-      "start": 55,
-      "end": 55
-     },
-     "quote": "Antigravity reads MCP servers from `~/.gemini/config/mcp_config.json` (all projects) or `<workspace>/.agents/mcp_config.json` (one workspace):",
-     "note": "Antigravity 又是一套配置路径"
-    },
-    {
-     "path": ".claude-plugin/plugin.json",
-     "lines": {
-      "start": 12,
-      "end": 17
-     },
-     "quote": "  \"mcpServers\": {\n    \"relay\": {\n      \"command\": \"node\",\n      \"args\": [\"${CLAUDE_PLUGIN_ROOT}/src/cli.mjs\", \"mcp\"]\n    }\n  },",
-     "note": "只有 Claude Code 插件自动接线"
-    }
-   ],
-   "before": {
-    "caption": "同一套安装步骤按四家规划者各写一遍，用户逐段照做，装错也没有提示。",
-    "nodes": [
-     {
-      "id": "user",
-      "label": "用户",
-      "kind": "caller",
       "row": 1,
       "column": 1,
-      "span": 3,
-      "modules": [],
-      "evidence": []
-     },
-     {
-      "id": "plugin",
-      "label": "Claude Code：/plugin install",
-      "kind": "step",
-      "row": 2,
-      "column": 1,
       "modules": [
-       "claude-planner-mod"
+       "executor-adapters"
       ],
       "evidence": [
        3
       ]
      },
      {
-      "id": "docs",
-      "label": "docs/planners.md 分家说明",
-      "kind": "module",
+      "id": "select",
+      "label": "selectModel：dsh 一律拒绝",
+      "kind": "step",
       "row": 2,
-      "column": 2,
-      "span": 2,
+      "column": 0,
       "modules": [
-       "planner-hosts"
+       "dispatch-policy"
       ],
       "evidence": [
-       0,
        1,
        2
       ]
      },
      {
-      "id": "codex",
-      "label": "Codex：mcp add + npx skills",
-      "kind": "step",
+      "id": "clis",
+      "label": "codex / claude / dsh",
+      "kind": "external",
       "row": 3,
-      "column": 1,
+      "column": 0,
+      "span": 2,
       "modules": [
-       "planner-hosts"
+       "executor-clis"
       ],
-      "evidence": [
-       0
-      ]
+      "evidence": []
      },
      {
-      "id": "dsh",
-      "label": "dsh：手工 MCP + 复制 skill",
-      "kind": "step",
+      "id": "hosts",
+      "label": "各家设置文件",
+      "kind": "external",
       "row": 3,
       "column": 2,
       "modules": [
        "planner-hosts"
       ],
-      "evidence": [
-       1
-      ]
-     },
-     {
-      "id": "agy",
-      "label": "Antigravity：mcp_config",
-      "kind": "step",
-      "row": 3,
-      "column": 3,
-      "modules": [
-       "planner-hosts"
-      ],
-      "evidence": [
-       2
-      ]
+      "evidence": []
      }
     ],
     "edges": [
      {
       "from": "user",
-      "to": "plugin"
+      "to": "config"
      },
      {
       "from": "user",
-      "to": "docs"
+      "to": "hostedit",
+      "label": "规划者模型"
      },
      {
-      "from": "docs",
-      "to": "codex"
+      "from": "hostedit",
+      "to": "hosts"
      },
      {
-      "from": "docs",
-      "to": "dsh"
+      "from": "config",
+      "to": "select"
      },
      {
-      "from": "docs",
-      "to": "agy"
+      "from": "select",
+      "to": "clis",
+      "label": "运行时才报错"
+     },
+     {
+      "from": "describe",
+      "to": "user"
      }
     ]
    },
    "after": {
-    "caption": "一条 setup 命令先列出要写的文件，确认后把 skill 装到各家读取的目录，可选写 MCP 配置，也能一键撤销。",
+    "caption": "写入前就按各家真实的模型列表核对；默认模型和核对状态一起显示；规划者与 dsh 的默认模型由同一个模块备份后写入。",
     "nodes": [
      {
       "id": "user",
-      "label": "用户",
+      "label": "用户 / 规划者",
       "kind": "caller",
-      "row": 1,
-      "column": 1,
-      "span": 3,
-      "modules": [],
-      "evidence": []
-     },
-     {
-      "id": "plugin",
-      "label": "Claude Code：/plugin install",
-      "kind": "step",
-      "row": 2,
-      "column": 1,
+      "row": 0,
+      "column": 0,
+      "span": 2,
       "modules": [
-       "claude-planner-mod"
+       "planner-hosts"
       ],
       "evidence": []
      },
      {
-      "id": "setup",
-      "label": "setup：预览、安装、撤销",
+      "id": "config",
+      "label": "config set / roles set",
+      "kind": "module",
+      "row": 1,
+      "column": 0,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "describe",
+      "label": "agents / models",
+      "kind": "module",
+      "row": 1,
+      "column": 1,
+      "modules": [
+       "executor-adapters",
+       "planner-surface"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "catalog",
+      "label": "模型目录：列表、核对、默认、写入",
       "kind": "deep",
       "row": 2,
-      "column": 2,
+      "column": 1,
       "span": 2,
       "modules": [
-       "planner-surface",
-       "relay-skill"
+       "dispatch-policy",
+       "executor-adapters"
       ],
       "evidence": [],
       "absorbs": [
-       "docs",
-       "codex",
-       "dsh",
-       "agy"
+       "hostedit"
       ]
      },
      {
-      "id": "shared",
-      "label": "装到 ~/.agents/skills",
+      "id": "select",
+      "label": "selectModel：dsh 比对默认",
       "kind": "step",
-      "row": 3,
-      "column": 2,
+      "row": 2,
+      "column": 0,
       "modules": [
-       "relay-skill"
+       "dispatch-policy"
       ],
       "evidence": []
      },
      {
-      "id": "mcpopt",
-      "label": "可选：写 MCP 配置",
-      "kind": "step",
-      "row": 3,
-      "column": 3,
+      "id": "clis",
+      "label": "codex / claude / dsh",
+      "kind": "external",
+      "row": 4,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "executor-clis"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "hosts",
+      "label": "各家设置文件",
+      "kind": "external",
+      "row": 4,
+      "column": 2,
       "modules": [
        "planner-hosts"
       ],
@@ -706,107 +329,489 @@
     "edges": [
      {
       "from": "user",
-      "to": "plugin"
+      "to": "config"
      },
      {
       "from": "user",
-      "to": "setup"
+      "to": "describe"
      },
      {
-      "from": "setup",
-      "to": "shared"
+      "from": "config",
+      "to": "catalog",
+      "label": "写前核对"
      },
      {
-      "from": "setup",
-      "to": "mcpopt",
-      "label": "用户选择时"
+      "from": "describe",
+      "to": "catalog"
+     },
+     {
+      "from": "select",
+      "to": "catalog"
+     },
+     {
+      "from": "catalog",
+      "to": "clis",
+      "label": "取列表"
+     },
+     {
+      "from": "catalog",
+      "to": "hosts",
+      "label": "备份写入"
+     },
+     {
+      "from": "select",
+      "to": "clis"
+     }
+    ],
+    "seams": [
+     {
+      "label": "按 agent id 适配，不分规划与执行",
+      "below": "catalog"
      }
     ]
    },
    "findings": [
     {
-     "id": "f-four-copies",
-     "kind": "duplicate",
-     "note": "同一步骤写四遍",
+     "id": "f-format-only",
+     "kind": "missing-seam",
+     "note": "只查格式",
      "targets": [
-      "codex",
-      "dsh",
-      "agy"
+      "config",
+      "clis"
      ],
      "evidence": [
       0,
+      5
+     ],
+     "confidence": "observed",
+     "detail": "MODEL_NAME 只限制字符和长度，config set 写入 executors.*.model 时直接接受；relay 与各家 CLI 之间没有一处去问“这个模型存在吗、支持这个推理强度吗”，所以写错只能在任务运行时由执行者报错。"
+    },
+    {
+     "id": "f-dsh-blanket",
+     "kind": "shallow",
+     "note": "dsh 一律拒绝",
+     "targets": [
+      "select"
+     ],
+     "evidence": [
       1,
       2
      ],
      "confidence": "observed",
-     "detail": "复制 skill、注册 MCP 服务这两步，在文档里按四家规划者各写一遍，各自的路径和命令都不同；每多接一家，用户就多一段手工步骤。"
+     "detail": "selectModel 只看执行者有没有 modelArgs 模板：dsh 没有，就拒绝任何模型。它不知道 dsh 当前默认用的是什么，于是“档位要求 dsh 用 X、而 dsh 恰好就在用 X”这种合理设置也写不进去。"
     },
     {
-     "id": "f-no-setup",
+     "id": "f-no-default",
      "kind": "missing-seam",
-     "note": "没有安装命令",
+     "note": "看不到默认模型",
      "targets": [
-      "user",
-      "docs"
+      "describe",
+      "clis"
      ],
      "evidence": [
-      0,
-      1
+      3
      ],
      "confidence": "observed",
-     "detail": "仓库没有安装或自检命令；doctor 只报告执行者是否装好，不检查 skill 和规划者的配置，装错时没有提示。"
+     "detail": "describeExecutors 只回显 relay 配置里的 model 和 effort；没配置时用户只看到空白，不知道 codex、claude、dsh 各自实际会用哪个模型。"
     },
     {
-     "id": "f-dup-install",
-     "kind": "leak",
-     "note": "可能重复安装",
+     "id": "f-planner-hand",
+     "kind": "missing-seam",
+     "note": "规划者模型手改",
      "targets": [
-      "dsh"
+      "user",
+      "hostedit"
      ],
      "evidence": [
-      1
+      4
      ],
-     "confidence": "hypothesis",
-     "detail": "dsh 同时读取 ~/.dsh/skills 和 ~/.agents/skills；照文档装进 .dsh/skills 后，若再用第三方 CLI 装进 ~/.agents/skills，会出现两个同名 skill。这一点依据 Birdview 安装文档推断，没有在真实 dsh 上验证。"
+     "confidence": "observed",
+     "detail": "relay-config skill 写明改不了规划者自己的模型；三家的模型分别在 TOML、JSON、YAML 里，键名各不相同，用户要逐家手改，改错也没有核对。"
     }
    ],
    "callerKnowledge": {
     "before": [
-     "每家的配置路径",
-     "MCP 命令写法",
-     "skill 放哪个目录",
-     "避免重复安装"
+     "各家有哪些模型",
+     "强度支持哪些",
+     "三家配置路径",
+     "dsh 只认默认",
+     "写错运行才知"
     ],
     "after": [
-     "运行 setup"
+     "models 列表",
+     "roles set"
     ]
    },
-   "solution": "新增 setup 命令：检测已装的规划者，默认只列出将写入的文件，确认后把 skill 装到 ~/.agents/skills（Claude Code 走插件），可选写 MCP 配置，并提供撤销。",
+   "solution": "新增按 agent id 适配的模型目录模块（models、hostconfig、yaml-lite）：从各家取模型列表和当前默认，供 config set、roles set、派发和显示共用核对，并负责带备份地写入各家的默认模型。",
    "deletionTest": {
     "verdict": "keep",
-    "text": "去掉 setup，复杂度会回到每个用户手里，变成逐段照文档操作；这是新模块要承担的复杂度，不是可删的中间层。"
+    "text": "去掉模型目录，复杂度回到用户身上：逐家查模型名、手改三种格式的配置、等运行时报错；这是新增的必要复杂度，不是可删的中间层。"
    },
    "wins": [
     {
      "kind": "leverage",
-     "text": "接入新规划者只需一条命令"
+     "text": "写入前就发现写错的模型和推理强度"
     },
     {
      "kind": "locality",
-     "text": "各家的目录与配置写法集中在一处维护"
+     "text": "三家模型列表、默认值和配置写法集中在一处"
+    },
+    {
+     "kind": "testability",
+     "text": "用假 app-server、假 dump 和临时配置文件即可测"
     }
    ],
    "verification": [
-    "setup 默认只打印将写入的文件，不改任何内容",
-    "安装后再运行 skills audit 没有重名",
-    "uninstall 恢复安装前的文件状态"
+    "config set 写入 codex 不存在的模型被拒，文件不变",
+    "dsh 默认与档位一致时派发成功，不一致时 model-mismatch",
+    "models set-default 写前留备份，--dry-run 不改任何文件",
+    "AGENTHUB_RELAY_ROLE=executor 时一切写入被拒"
    ],
    "boundaries": [
-    "Claude Code 仍通过插件安装",
+    "现有 relay_* 工具的名称与参数",
+    "零运行时依赖",
     "不写入任何密钥或环境变量的值",
-    "不修改 dsh 未公开文档的配置文件"
+    "派发时不改任何 agent 的配置"
    ],
-   "cost": "中等，风险在写用户主目录：各家目录约定会变，dsh 的 MCP 配置位置没有公开文档只能跳过；必须默认预览、写前备份、可撤销。依赖候选 skill-cli，先有 CLI 才值得自动安装。"
+   "cost": "中到偏高：新增三个模块约 500 行与测试。风险在写别家的配置文件（必须只改目标键、写前备份、可预览），codex app-server 协议官方标为不稳定，dsh 只能读 YAML 子集。"
+  },
+  {
+   "id": "planner-designation",
+   "title": "规划者只能被识别，不能被指定",
+   "lede": "规划者身份由 --planner、环境变量或 MCP 客户端名识别出来，只用于选 profile 和写进任务记录；配置里没有“谁是规划者”，派发护栏也拿不到这个身份。",
+   "impact": "用户想固定由 Codex 规划、其他 agent 只执行时，没有地方能写下这个决定；换个会话误用 Claude Code 派发，relay 照样接受，路由也悄悄换成另一套 profile。",
+   "strength": "strong",
+   "dependency": "in-process",
+   "modules": [
+    "planner-surface",
+    "dispatch-policy",
+    "planner-hosts"
+   ],
+   "evidence": [
+    {
+     "path": "src/tools.mjs",
+     "lines": {
+      "start": 201,
+      "end": 204
+     },
+     "quote": "  /** Who is planning: the explicit id, AGENTHUB_RELAY_PLANNER, or the MCP client's name. */\n  function plannerId() {\n    return plannerFromName(planner ?? env.AGENTHUB_RELAY_PLANNER ?? clientName());\n  }",
+     "note": "身份只靠识别",
+     "symbol": "plannerId"
+    },
+    {
+     "path": "src/config.mjs",
+     "lines": {
+      "start": 303,
+      "end": 319
+     },
+     "quote": "  const id = PLANNER_IDS.includes(planner) ? planner : 'unknown';\n  let profile;\n  let profileReason;\n  if (env.AGENTHUB_RELAY_PROFILE) {\n    profile = env.AGENTHUB_RELAY_PROFILE;\n    profileReason = 'AGENTHUB_RELAY_PROFILE';\n  } else if (plannerProfiles[id]) {\n    profile = plannerProfiles[id];\n    profileReason = `plannerProfiles.${id} in the configuration file`;\n  } else if (fileProfile !== undefined) {\n    profile = fileProfile;\n    profileReason = 'profile in the configuration file';\n  } else if (DEFAULT_CONFIG.plannerProfiles[id]) {\n    profile = DEFAULT_CONFIG.plannerProfiles[id];\n    profileReason = `built-in default for a ${id} planner`;\n  } else {\n    profile = DEFAULT_CONFIG.profile;",
+     "note": "身份只用来选 profile",
+     "symbol": "buildConfig"
+    },
+    {
+     "path": "src/policy.mjs",
+     "lines": {
+      "start": 146,
+      "end": 150
+     },
+     "quote": "  if (role === 'executor') {\n    throw new PolicyError(\n      'executor-role',\n      'This process runs as an agenthub-relay executor (AGENTHUB_RELAY_ROLE=executor); executors may not dispatch further jobs.',\n    );",
+     "note": "护栏只认执行者角色",
+     "symbol": "planDispatch"
+    },
+    {
+     "path": "src/cli.mjs",
+     "lines": {
+      "start": 186,
+      "end": 188
+     },
+     "quote": "function plannerOf(values) {\n  return plannerFromName(values.planner ?? process.env.AGENTHUB_RELAY_PLANNER);\n}",
+     "note": "CLI 同样只识别",
+     "symbol": "plannerOf"
+    },
+    {
+     "path": "src/config.mjs",
+     "lines": {
+      "start": 62,
+      "end": 62
+     },
+     "quote": "const TOP_KEYS = ['profile', 'profiles', 'plannerProfiles', 'executors', 'checks', 'light'];",
+     "note": "配置里没有 planner 键",
+     "symbol": "TOP_KEYS"
+    }
+   ],
+   "before": {
+    "caption": "谁来派发都行：识别出的身份只决定用哪套路由，换了规划者也不会有任何提示。",
+    "nodes": [
+     {
+      "id": "callers",
+      "label": "任意 agent 会话",
+      "kind": "caller",
+      "row": 0,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "planner-hosts"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "identify",
+      "label": "plannerId：参数、环境、客户端名",
+      "kind": "step",
+      "row": 1,
+      "column": 0,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": [
+       0,
+       3
+      ]
+     },
+     {
+      "id": "profile",
+      "label": "按身份选 profile",
+      "kind": "step",
+      "row": 1,
+      "column": 1,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": [
+       1,
+       4
+      ]
+     },
+     {
+      "id": "guard",
+      "label": "planDispatch 护栏",
+      "kind": "module",
+      "row": 2,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": [
+       2
+      ]
+     },
+     {
+      "id": "clis",
+      "label": "执行者",
+      "kind": "external",
+      "row": 3,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "executor-clis"
+      ],
+      "evidence": []
+     }
+    ],
+    "edges": [
+     {
+      "from": "callers",
+      "to": "identify"
+     },
+     {
+      "from": "identify",
+      "to": "profile"
+     },
+     {
+      "from": "profile",
+      "to": "guard",
+      "label": "路由"
+     },
+     {
+      "from": "guard",
+      "to": "clis"
+     }
+    ]
+   },
+   "after": {
+    "caption": "配置里写明规划者：识别不出时按它处理，识别出的是别人时派发被拒；路由与模型由 roles set 一次写好。",
+    "nodes": [
+     {
+      "id": "callers",
+      "label": "任意 agent 会话",
+      "kind": "caller",
+      "row": 0,
+      "column": 0,
+      "modules": [
+       "planner-hosts"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "setting",
+      "label": "planner 设置（roles set）",
+      "kind": "step",
+      "row": 0,
+      "column": 1,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "identify",
+      "label": "plannerId：参数、环境、客户端名",
+      "kind": "step",
+      "row": 1,
+      "column": 0,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "profile",
+      "label": "按身份选 profile",
+      "kind": "step",
+      "row": 1,
+      "column": 1,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "guard",
+      "label": "planDispatch：角色与规划者护栏",
+      "kind": "module",
+      "row": 2,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "clis",
+      "label": "执行者",
+      "kind": "external",
+      "row": 3,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "executor-clis"
+      ],
+      "evidence": []
+     }
+    ],
+    "edges": [
+     {
+      "from": "callers",
+      "to": "identify"
+     },
+     {
+      "from": "setting",
+      "to": "identify",
+      "label": "识别不出时"
+     },
+     {
+      "from": "identify",
+      "to": "profile"
+     },
+     {
+      "from": "identify",
+      "to": "guard",
+      "label": "识别出的身份"
+     },
+     {
+      "from": "setting",
+      "to": "guard",
+      "label": "指定的规划者"
+     },
+     {
+      "from": "profile",
+      "to": "guard",
+      "label": "路由"
+     },
+     {
+      "from": "guard",
+      "to": "clis"
+     }
+    ],
+    "seams": [
+     {
+      "label": "planner-mismatch 在策略层判定",
+      "below": "guard"
+     }
+    ]
+   },
+   "findings": [
+    {
+     "id": "f-identity-only",
+     "kind": "missing-seam",
+     "note": "没有指定入口",
+     "targets": [
+      "callers",
+      "identify"
+     ],
+     "evidence": [
+      0,
+      3,
+      4
+     ],
+     "confidence": "observed",
+     "detail": "MCP 与 CLI 两条入口都只做识别，配置的顶层键里没有 planner；用户无法声明“由谁规划”，只能在每次调用时传参或设环境变量。"
+    },
+    {
+     "id": "f-guard-blind",
+     "kind": "missing-seam",
+     "note": "身份不进护栏",
+     "targets": [
+      "identify",
+      "guard"
+     ],
+     "evidence": [
+      1,
+      2
+     ],
+     "confidence": "observed",
+     "detail": "识别出的身份只交给 buildConfig 选 profile，planDispatch 收不到它，护栏只认 AGENTHUB_RELAY_ROLE。把规划者校验放进 planDispatch，CLI 与 MCP 两条入口共用同一处判定，与执行者角色护栏并列。"
+    }
+   ],
+   "callerKnowledge": {
+    "before": [
+     "--planner 参数",
+     "客户端名规则",
+     "按规划者的路由",
+     "每次都要传"
+    ],
+    "after": [
+     "roles set"
+    ]
+   },
+   "solution": "配置新增 planner 键并由 roles set 写入；buildConfig 在识别不出时用它，planDispatch 收到识别身份与指定规划者，不符时以 planner-mismatch 拒绝。",
+   "deletionTest": {
+    "verdict": "keep",
+    "text": "没有这个设置，“由谁规划”只能靠每次调用时的参数维持，误用另一个会话派发不会被发现；校验必须放在派发策略里才对两条入口都生效。"
+   },
+   "wins": [
+    {
+     "kind": "locality",
+     "text": "规划者校验与执行者角色护栏放在同一处"
+    },
+    {
+     "kind": "leverage",
+     "text": "一条 roles set 写好规划者、三档执行者和模型"
+    }
+   ],
+   "verification": [
+    "planner 设为 codex 时，claude 身份派发返回 planner-mismatch",
+    "识别不出身份时按 codex 处理并在任务记录里标 assumed",
+    "未设置 planner 时现有派发行为不变"
+   ],
+   "boundaries": [
+    "身份识别的现有顺序",
+    "plannerProfiles 与 profile 的优先级",
+    "relay_wait、apply 等非派发工具"
+   ],
+   "cost": "小：config 新增一个键，planDispatch 多一个参数和一条护栏，tools 与 CLI 传入识别身份；主要风险是已有用户设置后忘记，所以错误信息要写明如何修改。"
   }
  ]
 }
