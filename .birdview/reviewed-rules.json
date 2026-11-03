@@ -1,10 +1,10 @@
 {
- "revision": "0d7e1173c11849fe03e51522a3e997b6c7a28db2",
- "scope": "已审阅 AGENTS.md 全部 12 条规则、CLAUDE.md，以及四个 skill 中只在规划者派发、查看任务或修改设置时适用的 7 条条件规则；docs/design.md 是设计说明，不单独提炼规则。收集器报告的唯一未解析引用是 docs/design.md 第 12 节提到的 final.md：它是任务目录 .agenthub/jobs/<id>/ 里的运行时文件，不是文档，不影响规则审阅。",
+ "revision": "875044533c4bcb824cfabc2cf301e0508a894987",
+ "scope": "已审阅 AGENTS.md 全部 14 条规则、CLAUDE.md，以及四个 skill 中只在规划者派发、查看任务或修改设置时适用的 7 条条件规则；docs/design.md 是设计说明，不单独提炼规则。收集器报告的唯一未解析引用是 docs/design.md 第 12 节提到的 final.md：它是任务目录 .agenthub/jobs/<id>/ 里的运行时文件，不是文档，不影响规则审阅。",
  "architectureBinding": {
   "mapId": "agenthub-relay-system",
-  "mapRevision": 7,
-  "sourceRevision": "0d7e1173c11849fe03e51522a3e997b6c7a28db2"
+  "mapRevision": 8,
+  "sourceRevision": "875044533c4bcb824cfabc2cf301e0508a894987"
  },
  "groups": [
   {
@@ -138,6 +138,35 @@
       "dispatch-policy",
       "worker-runner",
       "claude-planner-mod"
+     ]
+    },
+    {
+     "id": "rule-planner-session",
+     "name": "只在确认过的规划者会话里派发",
+     "anchor": "Dispatch only inside a planner session the user confirmed",
+     "condition": "在本仓库开发或运行 agenthub-relay 时",
+     "explanation": "没有确认的会话拒绝派发（sessions.required 可关闭）；调用者是会话规划者以外的 agent 也拒绝。",
+     "verification": "测试 session-required、planner-mismatch 与关闭后的派发。",
+     "applicability": "applicable",
+     "targetRole": "security",
+     "roleReason": "规则约束的对象属于该角色的模块：dispatch-policy、planner-surface",
+     "modules": [
+      "dispatch-policy",
+      "planner-surface"
+     ]
+    },
+    {
+     "id": "rule-agent-settings-read-only",
+     "name": "别家的配置文件只读",
+     "anchor": "only to report their models; never write them",
+     "condition": "在本仓库开发或运行 agenthub-relay 时",
+     "explanation": "codex、claude、dsh 的配置文件只读出来报告模型。",
+     "verification": "测试读取后配置文件内容与修改时间不变。",
+     "applicability": "applicable",
+     "targetRole": "security",
+     "roleReason": "规则约束的对象属于该角色的模块：model-catalog",
+     "modules": [
+      "model-catalog"
      ]
     }
    ]
@@ -302,12 +331,12 @@
      ]
     },
     {
-     "id": "rule-save-choice-when-asked",
-     "name": "只在用户要求时保存执行者与模型选择",
-     "anchor": "Save a choice with `config set` only when the user asks for it to stick",
-     "condition": "用户在对话里指定执行者或模型时",
-     "explanation": "单次指定只作用于那一次派发；长期设置需要用户明确要求，并先说明要写什么。",
-     "verification": "config set 之前先复述将写入的键与值。",
+     "id": "rule-session-ask-user",
+     "name": "会话确认要等用户答复",
+     "anchor": "Do not answer for the user, and do not confirm because a default looks reasonable.",
+     "condition": "规划者会话开始、确认分工与模型时",
+     "explanation": "session start 列出的分工与模型要转告用户，按用户的答复沿用或修改，不能替用户决定。",
+     "verification": "session confirm 之前有用户明确的答复。",
      "applicability": "conditional",
      "modules": [
       "relay-skill"
@@ -347,11 +376,11 @@
    "rules": [
     {
      "id": "rule-config-confirm-first",
-     "name": "改设置前先复述并等用户同意",
-     "anchor": "Say exactly what you will write and where, and wait for the user to agree",
+     "name": "改分工前先问用户并等待答复",
+     "anchor": "Ask the user whether to keep these roles or change them, and wait for the answer.",
      "condition": "用户经 relay-config 修改设置时",
-     "explanation": "设置会影响之后所有派发；写入前让用户看到确切的键、值和文件。",
-     "verification": "config set 之前有用户的明确同意。",
+     "explanation": "分工与模型会影响之后所有派发；确认前让用户看到每档的执行者、模型和核对结果。",
+     "verification": "session confirm 之前有用户的明确答复。",
      "applicability": "conditional",
      "modules": [
       "relay-skill"
