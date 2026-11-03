@@ -33,7 +33,7 @@ function cli(root, args, { input, env = {}, script = CLI } = {}) {
 function setup() {
   const repo = makeRepo();
   useFakeExecutors(repo.dir);
-  fs.appendFileSync(path.join(repo.dir, '.git', 'info', 'exclude'), '.test-user-config.json\n');
+  fs.appendFileSync(path.join(repo.dir, '.git', 'info', 'exclude'), '.test-user-config.json\nmodels-cache.json\n');
   return repo;
 }
 
@@ -149,6 +149,78 @@ test('config show, set and unset change the routing for later dispatches', () =>
     assert.equal(cli(dir, ['config', 'unset', 'profiles.thread16.deep']).code, 0);
     assert.equal(cli(dir, ['config', 'show', '--json']).json.routes.deep.executor, 'codex');
     assert.match(cli(dir, ['config', 'show']).stdout, /profile: thread16/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a planner session from the command line: start, confirm, then dispatch with --session or AGENTHUB_RELAY_SESSION', () => {
+  const { dir, cleanup } = setup();
+  try {
+    assert.equal(cli(dir, ['config', 'set', 'sessions.required', 'true']).code, 0);
+    const refused = cli(dir, ['dispatch', '--tier', 'review', '--task', 'x', '--planner', 'codex']);
+    assert.equal(refused.code, 1);
+    assert.equal(refused.json.error.code, 'session-required');
+
+    const started = cli(dir, ['session', 'start', '--planner', 'codex']);
+    assert.equal(started.code, 0, started.stdout + started.stderr);
+    assert.equal(started.json.status, 'needs-confirmation');
+    assert.equal(started.json.tiers.review.route, 'codex');
+    const id = started.json.session;
+    assert.equal(started.json.confirm.reuse, `session confirm ${id} --reuse`);
+
+    const bad = cli(dir, ['session', 'confirm', id, '--deep', 'codex:gpt-nope', '--planner', 'codex']);
+    assert.equal(bad.code, 1);
+    assert.equal(bad.json.error.code, 'model-unknown');
+    assert.ok(bad.json.error.details.failures[0].suggestions.includes('gpt-5.2'));
+
+    const confirmed = cli(dir, ['session', 'confirm', id, '--deep', 'codex:gpt-5.2', '--planner', 'codex']);
+    assert.equal(confirmed.code, 0, confirmed.stdout);
+    assert.equal(confirmed.json.status, 'confirmed');
+    assert.equal(cli(dir, ['session', 'show', id]).json.session.routes.deep, 'codex:gpt-5.2');
+
+    const dispatched = cli(dir, ['dispatch', '--session', id, '--tier', 'deep', '--scope', 'src', '--task', fakeTask({}), '--planner', 'codex']);
+    assert.equal(dispatched.code, 0, dispatched.stdout);
+    assert.equal(dispatched.json.session, id);
+    assert.equal(dispatched.json.model, 'gpt-5.2');
+    const fromEnv = cli(dir, ['dispatch', '--tier', 'review', '--task', fakeTask({})], { env: { AGENTHUB_RELAY_SESSION: id } });
+    assert.equal(fromEnv.json.session, id);
+    const other = cli(dir, ['dispatch', '--tier', 'review', '--task', 'x', '--planner', 'claude'], { env: { AGENTHUB_RELAY_SESSION: id } });
+    assert.equal(other.json.error.code, 'planner-mismatch');
+
+    for (const args of [['session'], ['session', 'confirm'], ['session', 'start', '--planner', 'cursor'], ['models', 'check']]) {
+      assert.equal(cli(dir, args).code, 2, args.join(' '));
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('models lists and checks names; config set checks a model before writing it', () => {
+  const { dir, cleanup } = setup();
+  try {
+    const listed = cli(dir, ['models', 'codex']);
+    assert.equal(listed.code, 0, listed.stdout);
+    assert.deepEqual(listed.json.agents.codex.models.map(m => m.id), ['gpt-5.1-codex', 'gpt-5.1-codex-mini', 'gpt-5.2']);
+    assert.equal(cli(dir, ['models']).json.agents.claude.source, 'aliases');
+
+    assert.equal(cli(dir, ['models', 'check', 'codex', 'gpt-5.2', '--effort', 'xhigh']).json.status, 'verified');
+    const effort = cli(dir, ['models', 'check', 'codex', 'gpt-5.2', '--effort', 'max']);
+    assert.equal(effort.code, 1);
+    assert.equal(effort.json.error.code, 'effort-unsupported');
+    assert.equal(cli(dir, ['models', 'check', 'claude', 'claude-opus-5-5']).json.status, 'format-only');
+    assert.equal(cli(dir, ['models', 'check', 'dsh', 'deepseek-v4-pro']).json.error.code, 'model-unsupported');
+
+    const file = path.join(dir, '.agenthub', 'config.json');
+    const before = fs.readFileSync(file, 'utf8');
+    const unknown = cli(dir, ['config', 'set', 'executors.codex.model', 'gpt-nope']);
+    assert.equal(unknown.code, 1);
+    assert.equal(unknown.json.error.code, 'model-unknown');
+    assert.equal(cli(dir, ['config', 'set', 'profiles.thread16.light', 'dsh:deepseek-v4-pro']).json.error.code, 'model-unsupported');
+    assert.equal(fs.readFileSync(file, 'utf8'), before, 'nothing was written');
+    assert.equal(cli(dir, ['config', 'set', 'profiles.thread16.review', 'claude:sonnet[1m]@xhigh']).code, 0);
+    assert.match(cli(dir, ['config', 'show']).stdout, /review  claude  model sonnet\[1m\]  effort xhigh/);
+    assert.match(cli(dir, ['config', 'show']).stdout, /sessions: not required/);
   } finally {
     cleanup();
   }

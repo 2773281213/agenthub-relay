@@ -16,6 +16,8 @@ These rules apply to every agent working in this repository, whichever agent is 
 - Refuse a write job whose scope overlaps the scope of an active write job, using directory-prefix matching (`src/api` covers `src/api/x.ts` but not `src/api-other.ts`).
 - Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`; in that role the hub must refuse dispatching and changing the relay settings, and the Claude Code mod must stay inactive.
 - Pass secrets only by environment variable name; never write API keys or environment values into job records, logs, events or test fixtures.
+- Dispatch only inside a planner session the user confirmed: refuse a dispatch without a confirmed session unless `sessions.required` is false, and refuse a caller identified as another agent than the session's planner.
+- Read other agents' own settings files (Codex `config.toml`, Claude Code `settings.json`, DeepSeek Harness `settings.yaml`) only to report their models; never write them.
 
 ## Verification rules
 

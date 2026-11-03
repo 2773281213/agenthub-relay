@@ -51,7 +51,9 @@ export function fakeAgent() {
 
 /**
  * Writes .agenthub/config.json so that codex, claude and dsh all run the fake
- * executor, which emulates each CLI's documented interface.
+ * executor, which emulates each CLI's documented interface (codex app-server
+ * included). Tests that are not about planner sessions dispatch without one:
+ * pass `top: { sessions: { required: true } }` to require them.
  */
 export function useFakeExecutors(root, extra = {}) {
   const command = fakeAgent();
@@ -61,6 +63,7 @@ export function useFakeExecutors(root, extra = {}) {
       claude: { command, ...(extra.claude ?? {}) },
       dsh: { command, ...(extra.dsh ?? {}) },
     },
+    sessions: { required: false },
     ...(extra.top ?? {}),
   };
   fs.mkdirSync(path.join(root, '.agenthub'), { recursive: true });

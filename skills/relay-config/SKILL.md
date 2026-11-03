@@ -1,6 +1,6 @@
 ---
 name: relay-config
-description: Show or change which agent and model each agenthub-relay tier uses, and which profile each planner gets. Use only when the user invokes relay-config.
+description: Show or change which agent and model each agenthub-relay tier uses in this planner session, and the roles saved for later sessions. Use only when the user invokes relay-config.
 disable-model-invocation: true
 ---
 
@@ -8,12 +8,10 @@ disable-model-invocation: true
 
 This thin entry uses the agenthub-relay skill in the sibling `../agenthub-relay` directory; run its script as `node ../agenthub-relay/scripts/cli.mjs`.
 
-1. Run `config show --planner <you>` and explain it plainly: who is taken to be planning, the active profile and why, and for each tier (deep, light, review) the executor, model and effort. Mention executors that are not installed.
-2. Turn what the user wants into settings:
-   - a tier: `profiles.<profile>.<tier>` with a value `executor[:model][@effort]`, for example `claude:opus@high` or `dsh`;
-   - an executor's default model or effort: `executors.<codex|claude|dsh>.model` or `.effort`;
-   - which profile a planner gets: `plannerProfiles.<claude|codex|dsh|agy>`; the default profile: `profile`.
-   Use `--user` when the user wants the setting for every project; otherwise it is saved in this repository's `.agenthub/config.json`.
-3. Say exactly what you will write and where, and wait for the user to agree. Then run `config set <key> <value>` (or `config unset <key>`) and show `config show` again.
+1. Run `session start --planner <you>` and explain it plainly: who is taken to be planning and who planned last, and for each tier (deep, light, review) the executor, model and effort, where each comes from, and the check of each model. Mention executors that are not installed and agents whose model list could not be read. `models <agent>` lists what an agent offers.
+2. Ask the user whether to keep these roles or change them, and wait for the answer.
+3. Say exactly what you will confirm, then run `session confirm <id> --reuse`, or `session confirm <id>` with `--deep`, `--light` or `--review` set to `executor[:model][@effort]` (add `--user` when the user wants the change for every project). If a check fails, nothing is saved: show the reason and the suggested names and ask again. Use the session id on later dispatches.
 
-DeepSeek Harness has no documented flag for choosing a model: the relay refuses a model for it, and its model is set in DeepSeek Harness's own settings. Credentials (`passEnv`) are not settable here; they are edited by hand and hold variable names only. This skill cannot change the planner's own model; in Claude Code that is `/model`.
+`config show` lists every setting and where it comes from; `config set <key> <value>` and `config unset <key>` change single settings (tier values are checked the same way), for example `sessions.required` or an executor's `timeoutMinutes`.
+
+DeepSeek Harness uses its own settings: the relay shows its default model and refuses a model for it. Credentials (`passEnv`) are not settable here; they are edited by hand and hold variable names only. This skill never changes any agent's own settings, the planner's model included; in Claude Code that is `/model`.

@@ -140,6 +140,16 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 5. **环境变量白名单**补上 Windows 程序需要的变量（SystemRoot、USERPROFILE、APPDATA、TEMP 等），各家 CLI 的登录信息在用户目录下。
 6. **原子写**：Windows 在别的进程打开目标文件时会短暂拒绝 rename，写入重试约 1 秒。
 
+## 15. v0.3：规划者会话与模型目录
+
+起因是“能设置谁规划、三个档位都可指定执行者、能取得模型名称并核对”的要求，以及随后的修订：每开一个规划者会话就确认执行者与模型，选择保存在配置里、下次会话列出并询问是否沿用；relay 不写任何 agent 的配置，dsh 用它自己的配置。第 4 轮架构评审给出两个候选，本版都已实现。
+
+1. **规划者会话**（`src/session.mjs`）：`session start` 按身份（`--planner`、`AGENTHUB_RELAY_PLANNER`、MCP 客户端名）创建待确认的会话，列出已保存的三档路由、每项模型与推理强度的来源、各家默认模型和核对结果，并提示规划者转告用户、等待答复。`session confirm` 沿用，或核对后把改动写成该规划者的 profile（文件里已有的 → 内置的 → `<规划者>-planner`，三档一起写，`plannerProfiles` 指向它），会话保存路由快照，之后改配置不影响已确认的会话。记录在 `.agenthub/sessions/`。MCP 连接记住自己的会话；CLI 用 `--session` 或 `AGENTHUB_RELAY_SESSION`。
+2. **派发护栏**（`src/policy.mjs` 的 `checkSession`，纯函数）：没有确认的会话 → `session-required`；识别出的调用者与会话规划者不同 → `planner-mismatch`；识别不出身份的调用者按会话规划者处理并记为 `assumed`。`sessions.required` 可关闭。护栏放在策略层，CLI 与 MCP 共用。
+3. **模型目录**（`src/models.mjs`，只读，按 agent id 适配，规划与执行通用）：codex 经 `codex app-server`（initialize → initialized → 分页 `model/list`）取模型及其支持的推理强度，进程用 `platform.mjs` 启动和结束，超时 15 秒，结果缓存 24 小时；claude 用官方别名，有 `ANTHROPIC_API_KEY` 时补充 `/v1/models`；dsh 读 `settings.yaml` 里 provider 的模型。各家默认模型从它们自己的配置读出：codex 的 `config.toml` 顶层（项目 `.codex/` 优先），claude 的 `ANTHROPIC_MODEL`、项目与用户 `settings.json`，dsh 的 `agent-default-model`。`checkRoute` 给出 verified、format-only、agent-default、not-in-list、unknown、unsupported；会话确认、`config set` 和单个任务的 `--model` 都用它。
+4. **YAML 子集**（`src/yaml-lite.mjs`）：只读块映射、序列、标量和注释，其他写法带行号报错，不猜。
+5. **不写别家的配置**：AGENTS.md 新增规则，relay 只读 codex、claude、dsh 的配置文件。规划者自己的模型由宿主决定。
+
 ## 来源
 
 - [linux.do 话题 3028918](https://linux.do/t/topic/3028918)

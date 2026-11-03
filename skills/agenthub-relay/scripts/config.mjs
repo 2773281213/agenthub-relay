@@ -28,8 +28,11 @@ export const RESERVED = Object.freeze({
   acp: 'The generic ACP executor is reserved in agenthub-relay; it is not implemented yet.',
 });
 
-/** Model and effort names: no spaces or shell syntax, at most 100 characters. */
-export const MODEL_NAME = /^[A-Za-z0-9._:/@+-]{1,100}$/;
+/** Model and effort names: no spaces or shell syntax, at most 100 characters (`opus[1m]` is a Claude Code alias). */
+export const MODEL_NAME = /^[A-Za-z0-9._:/@+[\]-]{1,100}$/;
+
+/** How MODEL_NAME reads in messages. */
+export const MODEL_NAME_RULE = 'a name of letters, digits and . _ : / @ + - [ ] (at most 100 characters)';
 
 export const DEFAULT_CONFIG = Object.freeze({
   profile: 'thread16',
@@ -57,9 +60,11 @@ export const DEFAULT_CONFIG = Object.freeze({
   },
   checks: { timeoutMinutes: 10 },
   light: { maxScopeEntries: 10, maxChangedFiles: 10 },
+  // Dispatch only inside a planner session the user confirmed (session.mjs).
+  sessions: { required: true },
 });
 
-const TOP_KEYS = ['profile', 'profiles', 'plannerProfiles', 'executors', 'checks', 'light'];
+const TOP_KEYS = ['profile', 'profiles', 'plannerProfiles', 'executors', 'checks', 'light', 'sessions'];
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_MINUTES = 24 * 60;
 
@@ -123,7 +128,7 @@ function checkMinutes(value, where) {
 
 function checkName(value, where) {
   if (typeof value !== 'string' || !MODEL_NAME.test(value)) {
-    throw fail('config-invalid', `${where} must be a name of letters, digits and . _ : / @ + - (at most 100 characters)`);
+    throw fail('config-invalid', `${where} must be ${MODEL_NAME_RULE}`);
   }
 }
 
@@ -221,6 +226,7 @@ export function buildConfig({ layers = [], env = {}, planner = 'unknown' } = {})
   const executors = structuredClone(DEFAULT_CONFIG.executors);
   const checks = { ...DEFAULT_CONFIG.checks };
   const light = { ...DEFAULT_CONFIG.light };
+  const sessions = { ...DEFAULT_CONFIG.sessions };
   const plannerProfiles = {};
   let fileProfile;
 
@@ -281,6 +287,14 @@ export function buildConfig({ layers = [], env = {}, planner = 'unknown' } = {})
         light[key] = value;
       }
     }
+    if (data.sessions !== undefined) {
+      if (!isObject(data.sessions)) throw fail('config-invalid', `${where}: sessions must be an object`);
+      for (const [key, value] of Object.entries(data.sessions)) {
+        if (key !== 'required') throw fail('config-invalid', `${where}: sessions.${key} is not a known setting`);
+        if (typeof value !== 'boolean') throw fail('config-invalid', `${where}: sessions.required must be true or false`);
+        sessions.required = value;
+      }
+    }
     if (data.profile !== undefined) {
       if (typeof data.profile !== 'string') throw fail('config-invalid', `${where}: profile must be a string`);
       fileProfile = data.profile;
@@ -339,6 +353,7 @@ export function buildConfig({ layers = [], env = {}, planner = 'unknown' } = {})
     executors: Object.freeze(executors),
     checks: Object.freeze(checks),
     light: Object.freeze(light),
+    sessions: Object.freeze(sessions),
   });
 }
 
@@ -379,7 +394,14 @@ const SETTABLE = [
   { pattern: /^executors\.([a-z]+)\.(model|effort|command)$/, parse: value => value },
   { pattern: /^executors\.([a-z]+)\.timeoutMinutes$/, parse: value => Number(value) },
   { pattern: /^checks\.shell$/, parse: value => value },
+  { pattern: /^sessions\.required$/, parse: parseBoolean },
 ];
+
+function parseBoolean(value) {
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false') return false;
+  throw fail('invalid-value', `"${value}" is not true or false`);
+}
 
 /** The keys `config set` and `config unset` accept. */
 export const SETTABLE_KEYS = Object.freeze([
@@ -388,42 +410,66 @@ export const SETTABLE_KEYS = Object.freeze([
   'profiles.<name>.<deep|light|review>',
   'executors.<codex|claude|dsh>.<model|effort|command|timeoutMinutes>',
   'checks.shell',
+  'sessions.required',
 ]);
 
 /**
- * Sets or removes one setting in a configuration file. The new file is
- * validated as a layer over the built-in defaults before it replaces the old
- * one, so an invalid value leaves the file untouched. `layersBelow` are the
- * files under this one (the user file, when writing the project file).
+ * Sets or removes settings in one configuration file, all or nothing. The new
+ * file is validated as a layer over the built-in defaults before it replaces
+ * the old one, so an invalid value leaves the file untouched. `layersBelow`
+ * are the files under this one (the user file, when writing the project file).
  *
- * @returns {{ file: string, key: string, value: unknown, removed: boolean }}
+ * @param {object} input
+ * @param {string} input.file
+ * @param {{ key: string, value?: unknown, unset?: boolean }[]} input.entries
+ * @returns {{ file: string, entries: { key: string, value: unknown, removed: boolean }[] }}
  */
-export function writeSetting({ file, key, value, unset = false, layersBelow = [] }) {
-  const rule = SETTABLE.find(entry => entry.pattern.test(key));
-  if (!rule) throw fail('invalid-key', `"${key}" cannot be set here (settable: ${SETTABLE_KEYS.join(', ')})`);
+export function writeSettings({ file, entries, layersBelow = [] }) {
   const data = readFileConfig(file) ?? {};
-  const parts = key.split('.');
-  let node = data;
-  for (const part of parts.slice(0, -1)) {
-    if (!isObject(node[part])) {
-      if (unset) return { file, key, value: undefined, removed: false };
-      node[part] = {};
+  const results = [];
+  let changed = false;
+  for (const { key, value, unset = false } of entries) {
+    const rule = SETTABLE.find(entry => entry.pattern.test(key));
+    if (!rule) throw fail('invalid-key', `"${key}" cannot be set here (settable: ${SETTABLE_KEYS.join(', ')})`);
+    const parts = key.split('.');
+    let node = data;
+    let missing = false;
+    for (const part of parts.slice(0, -1)) {
+      if (!isObject(node[part])) {
+        if (unset) {
+          missing = true;
+          break;
+        }
+        node[part] = {};
+      }
+      node = node[part];
     }
-    node = node[part];
-  }
-  const last = parts[parts.length - 1];
-  let parsed;
-  if (unset) {
-    if (!(last in node)) return { file, key, value: undefined, removed: false };
-    delete node[last];
-  } else {
-    parsed = rule.parse(value);
+    const last = parts[parts.length - 1];
+    if (unset) {
+      const removed = !missing && last in node;
+      if (removed) {
+        delete node[last];
+        changed = true;
+      }
+      results.push({ key, value: undefined, removed });
+      continue;
+    }
+    const parsed = rule.parse(value);
     node[last] = parsed;
+    changed = true;
+    results.push({ key, value: parsed, removed: false });
   }
+  if (!changed) return { file, entries: results };
   buildConfig({ layers: [...layersBelow, { file, data }] });
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(temp, `${JSON.stringify(data, null, 2)}\n`);
   renameWithRetry(temp, file);
-  return { file, key, value: parsed, removed: unset };
+  return { file, entries: results };
+}
+
+/** Sets or removes one setting; see writeSettings. */
+export function writeSetting({ file, key, value, unset = false, layersBelow = [] }) {
+  const { entries } = writeSettings({ file, entries: [{ key, value, unset }], layersBelow });
+  return { file, ...entries[0] };
 }

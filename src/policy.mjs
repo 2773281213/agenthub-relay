@@ -1,8 +1,8 @@
-// Dispatch policy and guards: tier mapping, scope rules, conflicts between
-// concurrent write jobs, reserved executors and the executor role.
-// Every decision here is a pure function of its inputs.
+// Dispatch policy and guards: the planner session, tier mapping, scope rules,
+// conflicts between concurrent write jobs, reserved executors and the
+// executor role. Every decision here is a pure function of its inputs.
 
-import { MODEL_NAME, RESERVED, TIERS, WRITE_TIERS } from './config.mjs';
+import { MODEL_NAME, MODEL_NAME_RULE, RESERVED, TIERS, WRITE_TIERS } from './config.mjs';
 
 export const MAX_TASK_CHARS = 100_000;
 export const MAX_CHECKS = 20;
@@ -95,7 +95,7 @@ function cleanList(value, field) {
 function cleanName(value, field) {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string' || !MODEL_NAME.test(value)) {
-    throw new PolicyError('invalid-request', `${field} must be a name of letters, digits and . _ : / @ + - (at most 100 characters)`);
+    throw new PolicyError('invalid-request', `${field} must be ${MODEL_NAME_RULE}`);
   }
   return value;
 }
@@ -103,17 +103,21 @@ function cleanName(value, field) {
 /**
  * The model and effort a job runs with: the request's, else the tier route's
  * (only when the route's executor is the one running), else the executor's
- * default. An executor without a flag for one of them refuses it.
+ * default. An executor without a flag for one of them refuses it, naming the
+ * model its own settings choose when that is known (`agentDefault`).
  */
-function selectModel({ request, route, executor, executorConfig }) {
+function selectModel({ request, route, executor, executorConfig, agentDefault }) {
   const fromRoute = route?.executor === executor ? route : {};
   const model = cleanName(request.model, 'model') ?? fromRoute.model ?? executorConfig.model;
   const effort = cleanName(request.effort, 'effort') ?? fromRoute.effort ?? executorConfig.effort;
   if (model !== undefined && !executorConfig.modelArgs?.length) {
+    const own = agentDefault?.model
+      ? ` Its own settings choose ${agentDefault.model}${agentDefault.modelFrom ? ` (${agentDefault.modelFrom})` : ''}.`
+      : '';
     throw new PolicyError(
       'model-unsupported',
-      `The ${executor} executor has no documented flag for choosing a model; set its model in ${executor}'s own settings, or configure executors.${executor}.modelArgs`,
-      { executor, model },
+      `The ${executor} executor takes no model from the relay: it uses its own settings.${own} Leave the model out, or configure executors.${executor}.modelArgs if your ${executor} has such a flag.`,
+      { executor, model, ...(agentDefault?.model ? { agentDefault: agentDefault.model } : {}) },
     );
   }
   if (effort !== undefined && !executorConfig.effortArgs?.length) {
@@ -133,6 +137,43 @@ function defaultTitle(task) {
 }
 
 /**
+ * The planner-session guard: a dispatch needs a session the user confirmed
+ * (unless sessions.required is off), and a caller identified as another agent
+ * than the session's planner is refused. An unidentified caller holding the
+ * session is taken to be its planner.
+ *
+ * @param {object} input
+ * @param {object|null} input.session the session record, or null for none
+ * @param {string} [input.caller] the identified planner id, or 'unknown'
+ * @param {boolean} input.required config.sessions.required
+ */
+export function checkSession({ session, caller, required }) {
+  if (session === null || session === undefined) {
+    if (required) {
+      throw new PolicyError(
+        'session-required',
+        'Dispatch needs a planner session the user confirmed: run "session start --planner <you>" (or relay_session with action "start"), show the user the saved executors and models, and confirm with their answer.',
+      );
+    }
+    return;
+  }
+  if (session.status !== 'confirmed') {
+    throw new PolicyError(
+      'session-required',
+      `Session ${session.id} is waiting for the user's confirmation: show the user what "session start" listed, then confirm it with their answer.`,
+      { session: session.id },
+    );
+  }
+  if (caller && caller !== 'unknown' && caller !== session.planner) {
+    throw new PolicyError(
+      'planner-mismatch',
+      `Session ${session.id} was confirmed for the ${session.planner} planner, but this call comes from ${caller}. Start and confirm your own session to plan as ${caller}.`,
+      { session: session.id, planner: session.planner, caller },
+    );
+  }
+}
+
+/**
  * Decides whether a dispatch may go ahead and what it becomes.
  *
  * @param {object} input
@@ -140,15 +181,20 @@ function defaultTitle(task) {
  * @param {object} input.config the loaded configuration (config.mjs)
  * @param {object[]} input.jobs every recorded job, for scope conflicts
  * @param {string|undefined} input.role AGENTHUB_RELAY_ROLE of the caller
+ * @param {object|null} [input.session] the planner session (see checkSession);
+ *   when given its confirmed routes are used. Leave it out to skip the guard.
+ * @param {string} [input.caller] the identified planner id
+ * @param {object} [input.agentDefaults] each agent's own default model, for messages
  * @returns {object} the normalized job plan
  */
-export function planDispatch({ request, config, jobs = [], role }) {
+export function planDispatch({ request, config, jobs = [], role, session, caller, agentDefaults = {} }) {
   if (role === 'executor') {
     throw new PolicyError(
       'executor-role',
       'This process runs as an agenthub-relay executor (AGENTHUB_RELAY_ROLE=executor); executors may not dispatch further jobs.',
     );
   }
+  if (session !== undefined) checkSession({ session, caller, required: config.sessions?.required ?? true });
   if (request === null || typeof request !== 'object') {
     throw new PolicyError('invalid-request', 'The dispatch request must be an object');
   }
@@ -160,7 +206,7 @@ export function planDispatch({ request, config, jobs = [], role }) {
   }
   const write = WRITE_TIERS.has(tier);
 
-  const route = config.routes?.[tier];
+  const route = (session?.routes ?? config.routes)?.[tier];
   const executor = request.executor ?? route?.executor ?? config.mapping[tier];
   if (RESERVED[executor]) {
     throw new PolicyError('reserved-executor', RESERVED[executor], { executor });
@@ -216,7 +262,13 @@ export function planDispatch({ request, config, jobs = [], role }) {
     }
   }
 
-  const { model, effort } = selectModel({ request, route, executor, executorConfig: config.executors[executor] });
+  const { model, effort } = selectModel({
+    request,
+    route,
+    executor,
+    executorConfig: config.executors[executor],
+    agentDefault: agentDefaults[executor],
+  });
 
   let timeoutMinutes = config.executors[executor].timeoutMinutes;
   if (request.timeoutMinutes !== undefined) {

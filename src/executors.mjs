@@ -230,8 +230,12 @@ export function adapterFor(id) {
   return adapter;
 }
 
-/** What relay_agents reports: availability, mapping and reserved entries. */
-export function describeExecutors(config, env = process.env) {
+/**
+ * What relay_agents reports: availability, mapping and reserved entries, and
+ * for each executor the model and effort its own settings choose (`defaults`,
+ * agent id -> models.agentDefault) for when the relay passes none.
+ */
+export function describeExecutors(config, env = process.env, defaults = {}) {
   const tiersOf = id => Object.entries(config.mapping).filter(([, executor]) => executor === id).map(([tier]) => tier);
   const live = Object.entries(config.executors).map(([id, cfg]) => {
     let resolved = null;
@@ -254,6 +258,7 @@ export function describeExecutors(config, env = process.env) {
       effort: cfg.effort,
       choosesModel: (cfg.modelArgs ?? []).length > 0,
       choosesEffort: (cfg.effortArgs ?? []).length > 0,
+      ...(defaults[id] ? { agentDefault: defaults[id] } : {}),
       timeoutMinutes: cfg.timeoutMinutes,
       passEnv: cfg.passEnv,
     };

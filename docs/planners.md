@@ -31,13 +31,32 @@ node <skill folder>/scripts/cli.mjs <command> --planner <claude|codex|dsh|agy>
 
 The repository is found in this order: `AGENTHUB_RELAY_ROOT`, `CLAUDE_PROJECT_DIR`, the working directory.
 
-## 2. Choose executors and models
+## 2. Start each planner session
 
-`config show` lists the active profile and why it was chosen, and for each tier the executor, model and effort.
+Dispatch works only inside a planner session the user confirmed. At the start of every planner session:
+
+```
+session start --planner codex
+session confirm <sessionId> --reuse                                   # keep the saved roles
+session confirm <sessionId> --deep claude:opus@high --review codex:gpt-5.1-codex@medium [--user]   # or change them
+dispatch --session <sessionId> --tier deep ...                        # or export AGENTHUB_RELAY_SESSION
+```
+
+`session start` lists the saved roles (for each tier the executor, model and effort, and where each comes from), who planned last, each agent's own default model, the models each agent offers and a check of each; the planner shows this to the user and confirms with their answer. Changes are checked first and saved for later sessions; when a check fails nothing is saved. Another agent cannot confirm or dispatch in the session (`planner-mismatch`); without a confirmed session dispatch returns `session-required`. MCP clients use `relay_session` (`action: start | confirm | show`) and the connection keeps its session. For scripts, `config set sessions.required false` turns the requirement off.
+
+## 3. Choose executors and models
+
+`config show` lists the active profile and why it was chosen, and for each tier the executor, model and effort. `models [codex|claude|dsh]` lists what each agent offers and uses by default:
+
+- Codex: the models of the signed-in account from `codex app-server` (`model/list`), with the reasoning efforts each supports. A codex model and effort must be in that list; when the list cannot be read, a codex model cannot be checked and is refused (leave the model out to use codex's own default). Its default comes from `.codex/config.toml` in the repository, then `$CODEX_HOME/config.toml`.
+- Claude Code: its documented aliases (`opus`, `sonnet`, `haiku`, `opus[1m]`, …), plus the API's list when `ANTHROPIC_API_KEY` is set. Names are checked by form only; effort must be one of low, medium, high, xhigh, max. Its default comes from `ANTHROPIC_MODEL`, then `.claude/settings.local.json`, `.claude/settings.json`, `~/.claude/settings.json`.
+- DeepSeek Harness: uses its own settings (`agent-default-model` in `$DSH_HOME/settings.yaml`); the relay shows that model and gives it none.
+
+The relay reads these settings files and never writes them. `models check <agent> <model> [--effort e]` checks one name.
 
 - Built in, a Claude Code planner gets `thread16` (deep → codex, light → dsh, review → claude) and a Codex planner gets `codex-planner` (deep → claude, light → dsh, review → codex). Any profile named in a configuration file takes precedence over these built-in planner defaults; `plannerProfiles` sets one per planner.
-- One job: `dispatch --executor claude --model opus --effort high`. The relay passes them through each CLI's own flags: Codex `-m <model>` and `-c model_reasoning_effort=<effort>`, Claude Code `--model` and `--effort`. DeepSeek Harness documents no per-run model flag (its model is set in its `settings.yaml`), so the relay refuses a model for it with `model-unsupported`; if your dsh build has such a flag, set `executors.dsh.modelArgs`, for example `["--model", "{model}"]`.
-- Lasting choices:
+- One job: `dispatch --executor claude --model opus --effort high`, checked like a saved choice. The relay passes them through each CLI's own flags: Codex `-m <model>` and `-c model_reasoning_effort=<effort>`, Claude Code `--model` and `--effort`. DeepSeek Harness documents no per-run model flag (its model is set in its `settings.yaml`), so the relay refuses a model for it with `model-unsupported`; if your dsh build has such a flag, set `executors.dsh.modelArgs`, for example `["--model", "{model}"]`.
+- Lasting choices outside a session (also checked before they are written):
 
 ```
 config set profiles.thread16.deep claude:opus@high     # a tier: executor[:model][@effort]
@@ -49,7 +68,7 @@ config unset profiles.thread16.deep
 
 Without `--user` these go to the repository's `.agenthub/config.json`; with `--user` to `~/.config/agenthub-relay/config.json` (or `$XDG_CONFIG_HOME/agenthub-relay/config.json`, or `AGENTHUB_RELAY_USER_CONFIG`), which applies to every project. The project file overrides the user file. Credentials (`passEnv`, variable names only) are edited by hand. An executor (`AGENTHUB_RELAY_ROLE=executor`) can change nothing.
 
-The planner's own model is set in the planner's host, not here.
+The planner's own model is set in the planner's host; the relay only reads it.
 
 ## Windows
 
@@ -57,7 +76,7 @@ The relay runs on Windows as well. `doctor` shows how each executor starts: `dir
 
 Windows 上同样可用：`doctor` 会显示每个执行者的启动方式；npm、pnpm 的 `.cmd` 外壳被解析为“node + 脚本”直接启动；检查默认走 cmd.exe，可用 `checks.shell` 改成 Git Bash；取消与超时用 taskkill 结束整棵进程树。
 
-## 3. Waiting
+## 4. Waiting
 
 From the command line, `wait` returns when a job ends or after `--timeout` seconds (50 by default, at most 3600; keep it under your shell tool's own timeout). Only Claude Code has the keep-alive mod; other planners poll with `wait`.
 
@@ -75,7 +94,7 @@ Mods load in Claude Code 2.1.287 and later. The plugin's options (`keep_alive`, 
 
 ## Optional: MCP for other planners
 
-The relay serves eight `relay_*` tools over stdio: `node /absolute/path/to/agenthub-relay/src/cli.mjs mcp` (or the skill's `scripts/cli.mjs mcp`). `relay_wait` returns within 50 seconds so that it stays under each client's tool timeout. The planner is recognized from the client name (`codex-mcp-client` → codex); set `AGENTHUB_RELAY_PLANNER` in the server's environment if yours is not.
+The relay serves ten `relay_*` tools over stdio: `node /absolute/path/to/agenthub-relay/src/cli.mjs mcp` (or the skill's `scripts/cli.mjs mcp`). `relay_wait` returns within 50 seconds so that it stays under each client's tool timeout. The planner is recognized from the client name (`codex-mcp-client` → codex); set `AGENTHUB_RELAY_PLANNER` in the server's environment if yours is not.
 
 - Codex: `codex mcp add agenthub-relay -- node /absolute/path/to/agenthub-relay/src/cli.mjs mcp`, or `[mcp_servers.agenthub-relay]` with `command = "node"` and `args = [".../src/cli.mjs", "mcp"]` in `~/.codex/config.toml`. Codex's default `tool_timeout_sec` is 60.
 - DeepSeek Harness: its public documentation that we checked does not show the MCP configuration file; add a stdio server named `agenthub-relay` with command `node` and arguments `/absolute/path/to/agenthub-relay/src/cli.mjs mcp` through dsh's own MCP settings. The skill route above needs none of this.

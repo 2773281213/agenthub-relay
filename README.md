@@ -54,8 +54,9 @@ Windows 说明：npm、pnpm 装的 `codex.cmd`、`dsh.cmd` 这类外壳会被解
 
 ```sh
 R="node ~/.agents/skills/agenthub-relay/scripts/cli.mjs"
-$R config show --planner codex                      # 看自己会用哪个 profile、各档位给谁、用什么模型
-echo "<自包含的任务说明>" | $R dispatch --tier light --scope src/x.ts --check "npm test -- x" --task-file - --planner codex
+$R session start --planner codex                    # 每个规划者会话先列出已保存的分工与模型，问用户沿用还是修改
+$R session confirm <sessionId> --reuse --planner codex   # 或 --deep claude:opus@high --light dsh --review codex@medium
+echo "<自包含的任务说明>" | $R dispatch --session <sessionId> --tier light --scope src/x.ts --check "npm test -- x" --task-file - --planner codex
 $R wait --planner codex                             # 默认 50 秒，--timeout 最长 3600 秒
 $R result <jobId>                                   # 摘要、检查、改动与越界文件、补丁路径
 $R apply <jobId>                                    # 或 discard / cancel
@@ -65,10 +66,12 @@ Claude Code 带插件时也可以直接用 `relay_*` 工具：派发结果里 `w
 
 ### 选择规划者、执行者与模型
 
-- **规划者**：`--planner` 或 `AGENTHUB_RELAY_PLANNER` 指明是谁在规划；MCP 客户端按握手时报的名字识别（如 `codex-mcp-client` → codex）。内置规则：Claude Code 规划用 `thread16`（深任务给 Codex），Codex 规划用 `codex-planner`（深任务给 Claude Code），可用 `plannerProfiles` 改。
-- **单个任务**：`dispatch --executor claude --model opus --effort high`。codex 用 `-m` 与 `-c model_reasoning_effort`，claude 用 `--model` 与 `--effort`；DeepSeek Harness 没有文档化的按次选模型参数（模型在它自己的 `settings.yaml` 里），指定时会以 `model-unsupported` 拒绝。
-- **长期设置**：`config set profiles.thread16.deep claude:opus@high`、`config set executors.codex.model <名字>`、`config set plannerProfiles.codex thread16`；加 `--user` 存到 `~/.config/agenthub-relay/config.json`，对所有项目生效，否则存在本仓库的 `.agenthub/config.json`（第一次派发时 hub 会把 `.agenthub/` 写进 `.git/info/exclude`）。项目设置覆盖用户设置。`/relay-config` 用对话完成这些修改。
-- **规划者自己的模型**由宿主决定（Claude Code 用 `/model`），这里改不了。
+- **每个规划者会话先确认**：`session start --planner <自己>` 列出已保存的分工（deep、light、review 各由谁执行、用什么模型和推理强度、各自来自哪里）、各家当前的默认模型、各家可用的模型和核对结果。规划者把这些转告用户，问沿用还是修改；`session confirm <id> --reuse` 沿用，或带 `--deep/--light/--review executor[:model][@effort]` 修改。修改先核对，核对通过才保存（默认本仓库的 `.agenthub/config.json`，`--user` 存到 `~/.config/agenthub-relay/config.json`），下次开会话时作为“已保存的设置”列出。没有确认过的会话不能派发（`session-required`），换了 agent 用别人的会话派发也会被拒（`planner-mismatch`）。脚本或 CI 可用 `config set sessions.required false` 关掉这一步。
+- **规划者是谁**：`--planner`、`AGENTHUB_RELAY_PLANNER` 或 MCP 客户端名（如 `codex-mcp-client` → codex）。内置规则：Claude Code 规划用 `thread16`（深任务给 Codex），Codex 规划用 `codex-planner`（深任务给 Claude Code）。
+- **模型的获取与核对**：`models [codex|claude|dsh]` 列出各家可用的模型和默认模型。codex 通过 `codex app-server` 的 `model/list` 取当前账号可用的模型及每个模型支持的推理强度，核对时模型必须在列表里、强度必须受支持；claude 列出官方别名（有 `ANTHROPIC_API_KEY` 时再加 API 返回的列表），只检查格式；各家默认模型从它们自己的配置文件读出（codex 的 `config.toml`、claude 的 `settings.json`、dsh 的 `settings.yaml`），relay 只读不写。`models check <agent> <model> [--effort e]` 单独核对。
+- **DeepSeek Harness** 用它自己的配置：relay 显示它的默认模型，但不替它选模型，指定时以 `model-unsupported` 拒绝。
+- **单个任务**：`dispatch --executor claude --model opus --effort high`，同样先核对。`config set` 写带模型的键时也先核对。
+- **规划者自己的模型**由宿主决定（Claude Code 用 `/model`），relay 只读出来显示。
 
 手写配置的例子（`passEnv` 只能手写，只写变量名）：
 
@@ -85,7 +88,7 @@ Claude Code 带插件时也可以直接用 `relay_*` 工具：派发结果里 `w
 
 ### Birdview
 
-本仓库按 [Birdview](https://github.com/Qiuner/birdview) 的三个 skill 标准设计：`.birdview/` 里有架构图与约束图（`architecture.html`）、实现过程的变更活动（`activity.html` 与 `activity-skill-cli.html`）、架构评审（`review.html`）和 skill 兼容性报告（`compatibility-audit.md`）。用浏览器直接打开 HTML 即可。
+本仓库按 [Birdview](https://github.com/Qiuner/birdview) 的三个 skill 标准设计：`.birdview/` 里有架构图与约束图（`architecture.html`）、实现过程的变更活动（`activity.html`、`activity-skill-cli.html`、`activity-windows.html` 与 `activity-roles-models.html`）、架构评审（`review.html`）和 skill 兼容性报告（`compatibility-audit.md`）。用浏览器直接打开 HTML 即可。
 
 ### 开发
 
@@ -103,6 +106,8 @@ claude plugin validate . # 插件清单与 hooks 模块
 - 真实的 Codex、dsh 没有在本仓库的测试环境里跑过：适配器按各自官方文档写成，用伪造的二进制做契约测试；codex 的推理强度参数写法来自其 `-c` 配置覆盖方式，未在真实 CLI 上验证。
 - 只有 Claude Code 会遵守 `disable-model-invocation`；其他宿主靠 skill 描述里的“仅在用户调用时使用”。
 - Claude Code 以外的规划者没有保活，用 `wait` 轮询。
+- claude 的模型名只检查格式，写错要到任务运行时才报错；codex 的 `model/list` 属于 app-server 协议，官方标为不稳定，取不到列表时 codex 的模型无法核对、会被拒绝（不指定模型则用它自己的默认）。
+- “问过用户再确认会话”靠 skill 指令约束，relay 只能强制先开会话、再确认。
 - 范围声明和越界审计是事后核对，不是文件系统写锁。
 - `$.model.fork` 是否会重置 Claude Code 的空闲压缩计时尚无文档，mod 会记录压缩事件，`/relay` 可以查看。
 
@@ -129,11 +134,11 @@ See [docs/planners.md](docs/planners.md) for each planner. Run `node <skill fold
 
 ### Use
 
-Follow the [routing skill](skills/agenthub-relay/SKILL.md): `config show`, then `dispatch` a self-contained task (on stdin with `--task-file -`), `wait`, read `result`, and `apply` (changes land unstaged) or `discard`, passing `--planner <you>` on each command. With the Claude Code plugin you may use the `relay_*` tools instead; if a dispatch result says `watcher.active`, end your turn and the mod wakes you. Keep-alive details: [docs/cache-keepalive.md](docs/cache-keepalive.md).
+Follow the [routing skill](skills/agenthub-relay/SKILL.md): start each planner session with `session start` and let the user keep or change the saved roles (`session confirm`), then `dispatch --session <id>` a self-contained task (on stdin with `--task-file -`), `wait`, read `result`, and `apply` (changes land unstaged) or `discard`, passing `--planner <you>` on each command. With the Claude Code plugin you may use the `relay_*` tools instead; if a dispatch result says `watcher.active`, end your turn and the mod wakes you. Keep-alive details: [docs/cache-keepalive.md](docs/cache-keepalive.md).
 
 ### Choosing planner, executors and models
 
-`--planner` (or `AGENTHUB_RELAY_PLANNER`, or the MCP client name) selects a profile: a Claude Code planner gets `thread16`, a Codex planner `codex-planner`, unless `plannerProfiles` says otherwise. A single job takes `--executor`, `--model` and `--effort` (codex: `-m`, `-c model_reasoning_effort`; claude: `--model`, `--effort`; DeepSeek Harness has no documented per-run model flag and refuses one). Lasting choices go through `config set` (`profiles.<name>.<tier>` as `executor[:model][@effort]`, `executors.<id>.model`, `plannerProfiles.<planner>`, `profile`), in the project's `.agenthub/config.json` or, with `--user`, in `~/.config/agenthub-relay/config.json`; `/relay-config` does this in conversation. The planner's own model is the host's to set (`/model` in Claude Code).
+Every planner session starts with `session start --planner <you>`: it lists the saved roles (the executor, model and effort of `deep`, `light` and `review`, and where each comes from), each agent's own default model, the models each agent offers and a check of each. The planner asks the user, then runs `session confirm <id> --reuse` or passes `--deep`, `--light` or `--review` as `executor[:model][@effort]`; changes are checked first and saved for later sessions (the project's `.agenthub/config.json`, or with `--user` `~/.config/agenthub-relay/config.json`). Dispatch needs a confirmed session (`session-required`), and another agent cannot dispatch in it (`planner-mismatch`); `config set sessions.required false` turns this off for scripts. `models [codex|claude|dsh]` lists models: codex through `codex app-server`'s `model/list` (models and their reasoning efforts are checked exactly), claude through its documented aliases (checked by form; the API list is added when `ANTHROPIC_API_KEY` is set), and each agent's default from its own settings file, which the relay only reads. DeepSeek Harness uses its own settings and refuses a model from the relay. A single job still takes `--executor`, `--model` and `--effort`, checked the same way. The planner's own model is the host's to set (`/model` in Claude Code).
 
 ### Develop
 
@@ -141,7 +146,7 @@ Follow the [routing skill](skills/agenthub-relay/SKILL.md): `config show`, then 
 
 ### Limitations
 
-Real Codex and dsh runs are not part of the test suite: their adapters follow each CLI's documentation and are contract-tested against a fake executor, and codex's effort flag follows its `-c` configuration override without a real run. Only Claude Code honors `disable-model-invocation`. Planners other than Claude Code have no keep-alive and poll with `wait`. Scope declarations and the out-of-scope audit are checks after the fact, not filesystem locks. Whether a fork resets Claude Code's idle-compaction timer is undocumented; the mod records compactions and `/relay` shows them.
+Real Codex and dsh runs are not part of the test suite: their adapters follow each CLI's documentation and are contract-tested against a fake executor, and codex's effort flag follows its `-c` configuration override without a real run. Only Claude Code honors `disable-model-invocation`. Planners other than Claude Code have no keep-alive and poll with `wait`. Claude model names are checked by form only; codex's `model/list` is part of its app-server protocol, marked unstable, and without the list a codex model cannot be checked and is refused. That the planner asked the user before confirming a session rests on the skill's instructions; the relay can only require a confirmed session. Scope declarations and the out-of-scope audit are checks after the fact, not filesystem locks. Whether a fork resets Claude Code's idle-compaction timer is undocumented; the mod records compactions and `/relay` shows them.
 
 ## License
 

@@ -1,10 +1,10 @@
 # 技能兼容性体检
 
-扫描时间: 2026-10-29T12:27:26.110Z
+扫描时间: 2026-11-03T15:57:04.222Z
 
 ## 兼容性结论：已提供评估
 
-评估对象是已实现的 v0.2 skill：agenthub-relay（自带脚本，MCP 可选）与三个只能显式调用的入口 relay-review、relay-status、relay-config，和 birdview 三件套一起放在共享目录 .agents/skills 里体检。没有重名，没有元数据问题。relay 系列与 birdview、birdview-review 需要排序：先确认计划或评审方案，再派发、再 apply；上一轮发现的 relay-status 缺少 Birdview 规则已补上。relay-review 与 birdview-review 在只显式调用、不做架构评审的前提下兼容；relay-config 只写 relay 自己的设置文件，且先复述再写。安装时只装一份（共享目录），否则同时读 ~/.dsh/skills 与 ~/.agents/skills 的宿主会看到重名。宿主对 disable-model-invocation 的支持只确认了 Claude Code。
+评估对象是 v0.3 的 skill（新增规划者会话：每个会话先列出已保存的分工与模型并等待用户确认）：agenthub-relay（自带脚本，MCP 可选）与三个只能显式调用的入口 relay-review、relay-status、relay-config，和 birdview 三件套一起放在共享目录 .agents/skills 里体检。没有重名，没有元数据问题。relay 系列与 birdview、birdview-review 需要排序：先确认计划或评审方案，再派发、再 apply；上一轮发现的 relay-status 缺少 Birdview 规则已补上。relay-review 与 birdview-review 在只显式调用、不做架构评审的前提下兼容；relay-config 改为会话流程，只写 relay 自己的设置文件，且先问用户、等待答复再确认；会保存修改的确认在 Birdview 计划确认前只用 --reuse 或 --user。安装时只装一份（共享目录），否则同时读 ~/.dsh/skills 与 ~/.agents/skills 的宿主会看到重名。宿主对 disable-model-invocation 的支持只确认了 Claude Code。
 
 发现技能 / 引用正文的文件 / 评估关系: 7 / 7 / 10
 
@@ -12,20 +12,21 @@
 
 ## 需要关注的关系
 
-评估者 / 评估时间: agent / 2026-10-29T12:27:26.000Z
+评估者 / 评估时间: agent / 2026-11-03T15:57:04.000Z
 
 ### birdview / agenthub-relay: 需要排序
 
 - **发生场景:** Birdview 已为本任务启用，规划者要用改版后的 agenthub-relay（脚本或 MCP）派发会改文件的任务。
 - **实际影响:** 若先派发，执行者会在用户确认计划前改代码，绕过 Birdview 的确认关口。
-- **判断依据:** v0.2 的 agenthub-relay 保留了 With Birdview 规则：先确认计划再派发写任务，只读 review 任务可以提前；与 Birdview 允许确认前做只读调查一致。改用脚本不影响这个顺序。
-- **建议操作:** 保持现有顺序：Birdview 计划确认后再派发 deep/light 任务。这一条已原样保留在 v0.2 的 SKILL.md。
+- **判断依据:** v0.3 的 agenthub-relay 保留了 With Birdview 规则：先确认计划再派发写任务，只读 review 任务可以提前；与 Birdview 允许确认前做只读调查一致。新增的规划者会话也写明了顺序：session start 只读；会保存修改的 session confirm 会写 relay 的设置文件，所以 Birdview 计划未确认时用 --reuse，或用 --user 保存并说明这不等于批准计划。
+- **建议操作:** 保持现有顺序：Birdview 计划确认后再派发 deep/light 任务；会话确认在计划确认前只用 --reuse 或 --user。
 - **置信度（AI 判断）:** 高
 
 **原文证据:**
 
 - birdview (.agents/skills/birdview/SKILL.md): In both auto and on-demand mode, finish the reviewable map and change plan first: show the HTML preview, affected modules/files, intended behavior, applicable constraints, verification plan and remaining uncertainties. Then ask whether to implement this displayed scope and wait for an explicit reply.
 - agenthub-relay (.agents/skills/agenthub-relay/SKILL.md): When Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only \`review\` jobs may run before confirmation.
+- agenthub-relay (.agents/skills/agenthub-relay/SKILL.md): \`session start\` only reads; a \`session confirm\` that saves changed roles writes the relay's settings file, so while Birdview's plan is unconfirmed confirm with \`--reuse\`, or save the change with \`--user\` and say that this does not approve the plan.
 
 ### birdview-review / agenthub-relay: 需要排序
 
@@ -96,27 +97,27 @@
 
 - **发生场景:** Birdview 正在等待用户确认计划时，用户调用 relay-config 修改执行者或模型设置。
 - **实际影响:** relay-config 只写 relay 自己的设置文件（.agenthub/config.json 或用户级文件），不改实现、测试或项目源码；修改设置也不代表批准了 Birdview 的计划。
-- **判断依据:** relay-config 只在用户显式调用时运行，并且要先复述将写入的内容、等用户同意才写；这是用户对设置的直接指示，与 Birdview 计划确认是两件事。Birdview 禁止确认前修改项目配置，.agenthub/config.json 不进版本库，但它是否算“项目配置”取决于理解，所以置信度为中。
+- **判断依据:** relay-config 只在用户显式调用时运行，改为会话流程：先列出已保存的分工与模型、问用户沿用还是修改并等待答复，复述将确认的内容后才 confirm；它不写任何 agent 自己的配置。Birdview 禁止确认前修改项目配置，保存修改会写 .agenthub/config.json（不进版本库），它是否算“项目配置”取决于理解，所以置信度为中；agenthub-relay 已写明计划未确认时用 --reuse 或 --user。
 - **建议操作:** Birdview 计划确认前如需改 relay 设置，用 --user 写用户级文件，或明确告诉用户这不等于确认计划；计划内要用的执行者设置，写进计划的说明里。
 - **置信度（AI 判断）:** 中
 
 **原文证据:**
 
 - birdview (.agents/skills/birdview/SKILL.md): Before confirmation, read-only investigation and writing map/constraint/plan artifacts are allowed; do not edit implementation, tests or project configuration, or emit \`editing\` events.
-- relay-config (.agents/skills/relay-config/SKILL.md): Say exactly what you will write and where, and wait for the user to agree.
+- relay-config (.agents/skills/relay-config/SKILL.md): Ask the user whether to keep these roles or change them, and wait for the answer.
 
 ### agenthub-relay / relay-config: 兼容
 
-- **发生场景:** 用户在派发过程中要求以后都改用某个执行者或模型。
-- **实际影响:** 两者都只在用户要求时写设置，并在写前说明内容。
-- **判断依据:** agenthub-relay 规定只有用户要求长期生效时才用 config set 保存；relay-config 要求先复述再等同意。两者对写入设置的门槛一致。
+- **发生场景:** 规划者会话开始时，或用户在会话中途调用 relay-config 想改执行者或模型。
+- **实际影响:** 两者走同一个会话流程：列出已保存的配置、问用户、按答复确认；修改先核对再保存。
+- **判断依据:** agenthub-relay 要求会话开始先 session start、把分工与模型告诉用户并等待答复、不得替用户决定；relay-config 用同一组命令并同样等待答复。两者对写入设置的门槛一致。已确认的会话不能再次确认，中途改分工需要新开会话，两者都不会绕过这一点。
 - **建议操作:** 无需处理。
 - **置信度（AI 判断）:** 高
 
 **原文证据:**
 
-- agenthub-relay (.agents/skills/agenthub-relay/SKILL.md): Save a choice with \`config set\` only when the user asks for it to stick
-- relay-config (.agents/skills/relay-config/SKILL.md): Say exactly what you will write and where, and wait for the user to agree.
+- agenthub-relay (.agents/skills/agenthub-relay/SKILL.md): ask whether to keep this or change it. Then wait for the answer. Do not answer for the user, and do not confirm because a default looks reasonable.
+- relay-config (.agents/skills/relay-config/SKILL.md): Ask the user whether to keep these roles or change them, and wait for the answer.
 
 ### birdview / birdview-review: 兼容
 
@@ -153,6 +154,6 @@
 
 ## 扫描范围与局限
 
-- /tmp/claude-0/-home-claude/47414796-c778-5dd6-b985-ac263dc529bf/scratchpad/compat3/project/.agents/skills
+- .agents/skills
 
 仅覆盖已发现的 SKILL.md。宿主注入规则、引用文档和未发现目录需另行核查。工具校验原文与摘要，语义结论仍是 AI 判断。体检不修改技能配置。

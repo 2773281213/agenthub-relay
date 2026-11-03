@@ -1,6 +1,6 @@
 ---
 name: agenthub-relay
-description: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) with the bundled relay script or the relay_* MCP tools - split the work, pick a tier and, when asked, an executor and model, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.
+description: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) with the bundled relay script or the relay_* MCP tools - confirm with the user which agent and model takes each tier for this planner session, split the work, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.
 ---
 
 # agenthub-relay: delegating to other agents
@@ -23,21 +23,33 @@ If the `relay_*` MCP tools are loaded (the Claude Code plugin loads them), you m
 
 | Command | Tool |
 |---|---|
+| `session start`, `session confirm <id> (--reuse \| --deep/--light/--review <route>) [--user]`, `session show` | `relay_session` |
+| `models [codex\|claude\|dsh]`, `models check <agent> [<model>] [--effort <e>]` | `relay_models` |
 | `agents` | `relay_agents` |
-| `dispatch --tier <t> --task-file - [--scope <p>]... [--check <c>]... [--executor <id>] [--model <m>] [--effort <e>] [--title <s>] [--acceptance <s>]` (task on stdin) | `relay_dispatch` |
+| `dispatch --session <id> --tier <t> --task-file - [--scope <p>]... [--check <c>]... [--executor <id>] [--model <m>] [--effort <e>] [--title <s>] [--acceptance <s>]` (task on stdin) | `relay_dispatch` |
 | `wait [<id>...] [--timeout <s>]` | `relay_wait` |
 | `result <id>` | `relay_result` |
 | `apply <id> [--allow-out-of-scope] [--force]`, `discard <id>`, `cancel <id>` | `relay_apply`, `relay_discard`, `relay_cancel` |
 | `status [<id>] [--json]` | `relay_status` |
 | `config show`, `config set <key> <value> [--user]`, `config unset <key> [--user]` | (script only) |
 
-## 1. Who executes, and with which model
+## 1. Start the planner session: who executes, with which model
 
-- The first time you use the relay in a project, run `config show`. If it still shows the built-in defaults, tell the user which executor and model each tier goes to and ask once whether to keep that.
-- When the user names an executor, model or effort for a piece of work ("give this to Claude Opus"), pass `--executor`, `--model` and `--effort` on that dispatch only.
-- Save a choice with `config set` only when the user asks for it to stick ("from now on, light work uses …"). Say what you will write before you write it. Tier values are `executor[:model][@effort]`, for example `config set profiles.thread16.deep claude:opus@high`; `--user` saves it for every project.
-- An executor that has no flag for a model refuses one with `model-unsupported` (DeepSeek Harness sets its model in its own settings). Tell the user; do not retry with another model.
-- You cannot change your own model from here. If the user wants a different planner model, point them to their host (in Claude Code, `/model`).
+Dispatch works only inside a planner session the user confirmed (`session-required` otherwise). Once per planner session, before the first dispatch:
+
+1. Run `session start --planner <you>` (or `relay_session` with `action: "start"`). It lists the saved roles: for `deep`, `light` and `review` the executor, model and effort and where each comes from, each agent's own default model, the models each agent offers, and a check of each model.
+2. Tell the user, in a few lines, who takes each tier with which model, and ask whether to keep this or change it. Then wait for the answer. Do not answer for the user, and do not confirm because a default looks reasonable.
+3. Confirm with their answer:
+   - to keep it: `session confirm <id> --reuse`;
+   - to change it: `session confirm <id> --deep claude:opus@high --light dsh --review codex:gpt-5.1-codex@medium` (any of the three, each `executor[:model][@effort]`). The relay checks each model first (codex against its model list, claude by form and effort level) and saves the change for later sessions (`--user` for every project). When a check fails, nothing is saved: show the user the reason and the suggested names, and ask again.
+4. Pass `--session <id>` on every dispatch (or set `AGENTHUB_RELAY_SESSION`). With the MCP tools the connection remembers the session.
+
+Other rules:
+
+- DeepSeek Harness uses its own settings: the relay shows its default model but gives it none, and refuses a model for it with `model-unsupported`. If the user wants another dsh model, they change it in DeepSeek Harness.
+- When the user names an executor, model or effort for one piece of work ("give this to Claude Opus"), pass `--executor`, `--model` and `--effort` on that dispatch only; they are checked the same way.
+- `planner-mismatch` means the session belongs to another planner: start your own session instead of reusing someone else's id.
+- You cannot change your own model from here; the relay only reads it. If the user wants a different planner model, point them to their host (in Claude Code, `/model`).
 
 ## 2. Split
 
@@ -82,4 +94,4 @@ A completed job is not proof: "checks passed" covers only what the checks test, 
 
 ## With Birdview
 
-When Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation.
+When Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation. `session start` only reads; a `session confirm` that saves changed roles writes the relay's settings file, so while Birdview's plan is unconfirmed confirm with `--reuse`, or save the change with `--user` and say that this does not approve the plan.

@@ -18,6 +18,57 @@ if (args[0] === '--version') {
   process.exit(0);
 }
 
+if (args[0] === 'app-server') {
+  // `codex app-server`: JSON-RPC over stdio lines. FAKE_APP_SERVER selects
+  // misbehaviour (hang, error, exit); FAKE_CODEX_MODELS is the model list,
+  // served two to a page; FAKE_APP_SERVER_PID records this process's pid.
+  if (process.env.FAKE_APP_SERVER_PID) fs.writeFileSync(process.env.FAKE_APP_SERVER_PID, String(process.pid));
+  const behaviour = process.env.FAKE_APP_SERVER ?? 'ok';
+  if (behaviour === 'exit') {
+    process.stderr.write('fake app-server: not signed in\n');
+    process.exit(3);
+  }
+  const models = process.env.FAKE_CODEX_MODELS
+    ? JSON.parse(process.env.FAKE_CODEX_MODELS)
+    : [
+        { id: 'gpt-5.1-codex', model: 'gpt-5.1-codex', displayName: 'GPT-5.1 Codex', isDefault: true, hidden: false,
+          supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }], defaultReasoningEffort: 'medium' },
+        { id: 'gpt-5.1-codex-mini', model: 'gpt-5.1-codex-mini', displayName: 'GPT-5.1 Codex Mini', isDefault: false, hidden: false,
+          supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }], defaultReasoningEffort: 'low' },
+        { id: 'gpt-5.2', model: 'gpt-5.2', displayName: 'GPT-5.2', isDefault: false, hidden: false,
+          supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }, { reasoningEffort: 'xhigh' }] },
+      ];
+  let initialized = false;
+  let buffer = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', chunk => {
+    buffer += chunk;
+    let newline;
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      if (!line.trim()) continue;
+      const message = JSON.parse(line);
+      if (behaviour === 'hang') continue;
+      const reply = body => process.stdout.write(`${JSON.stringify({ id: message.id, ...body })}\n`);
+      if (message.method === 'initialize') reply({ result: { userAgent: 'fake-codex/0.0.0' } });
+      else if (message.method === 'initialized') initialized = true;
+      else if (message.method === 'model/list') {
+        if (!initialized) reply({ error: { code: -32002, message: 'Not initialized' } });
+        else if (behaviour === 'error') reply({ error: { code: -32603, message: 'fake model/list failure' } });
+        else {
+          const start = message.params?.cursor ? Number(message.params.cursor) : 0;
+          const data = models.slice(start, start + 2);
+          const next = start + 2 < models.length ? String(start + 2) : null;
+          reply({ result: { data, nextCursor: next } });
+        }
+      } else if (message.id !== undefined) reply({ error: { code: -32601, message: `unknown method ${message.method}` } });
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  await new Promise(() => {});
+}
+
 async function readStdin() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);

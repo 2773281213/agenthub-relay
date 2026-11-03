@@ -4,13 +4,17 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import readline from 'node:readline';
 import { test } from 'node:test';
 
 import { CLI, fakeTask, makeRepo, useFakeExecutors, waitFor } from './helpers.mjs';
 
 function startServer(dir) {
-  const env = { ...process.env, AGENTHUB_RELAY_ROOT: dir };
+  // An isolated user configuration (and model cache) for each server.
+  const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agenthub-user-'));
+  const env = { ...process.env, AGENTHUB_RELAY_ROOT: dir, AGENTHUB_RELAY_USER_CONFIG: path.join(userDir, 'config.json') };
   delete env.CLAUDE_PROJECT_DIR;
   const child = spawn(process.execPath, [CLI, 'mcp'], { cwd: dir, env, stdio: ['pipe', 'pipe', 'pipe'] });
   const waiting = new Map();
@@ -43,7 +47,10 @@ function startServer(dir) {
   };
   const stop = () =>
     new Promise(resolve => {
-      child.on('exit', resolve);
+      child.on('exit', () => {
+        fs.rmSync(userDir, { recursive: true, force: true });
+        resolve();
+      });
       child.stdin.end();
     });
   return { child, send, request, call, tool, stop, stray, stderr: () => stderr };
@@ -67,7 +74,7 @@ test('a non-Claude MCP client runs the whole relay flow', async () => {
 
     const listed = await server.call('tools/list', {});
     assert.deepEqual(listed.result.tools.map(t => t.name), [
-      'relay_agents', 'relay_dispatch', 'relay_status', 'relay_wait', 'relay_result', 'relay_apply', 'relay_discard', 'relay_cancel',
+      'relay_agents', 'relay_session', 'relay_models', 'relay_dispatch', 'relay_status', 'relay_wait', 'relay_result', 'relay_apply', 'relay_discard', 'relay_cancel',
     ]);
     for (const t of listed.result.tools) assert.equal(t.inputSchema.type, 'object');
 
@@ -104,10 +111,46 @@ test('a non-Claude MCP client runs the whole relay flow', async () => {
   }
 });
 
+test('an MCP planner keeps its confirmed session on the connection; relay_models only reads', async () => {
+  const { dir, cleanup } = makeRepo();
+  const server = startServer(dir);
+  try {
+    useFakeExecutors(dir, { top: { sessions: { required: true } } });
+    await server.call('initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'codex-mcp-client', version: '1.0.0' } });
+    server.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+
+    const refused = await server.tool('relay_dispatch', { tier: 'review', task: 'x' });
+    assert.equal(refused.data.error.code, 'session-required');
+
+    const started = await server.tool('relay_session', { action: 'start' });
+    assert.equal(started.data.planner, 'codex', 'the client name says who plans');
+    assert.equal(started.data.tiers.deep.route, 'claude');
+    const confirmed = await server.tool('relay_session', { action: 'confirm', reuse: true });
+    assert.equal(confirmed.data.session, started.data.session, 'confirm defaults to the session this connection started');
+
+    const dispatched = await server.tool('relay_dispatch', { tier: 'review', task: fakeTask({ message: 'looked' }) });
+    assert.equal(dispatched.isError, undefined, JSON.stringify(dispatched.data));
+    assert.equal(dispatched.data.session, started.data.session);
+    const agents = await server.tool('relay_agents');
+    assert.equal(agents.data.session.status, 'confirmed');
+
+    const config = fs.readFileSync(`${dir}/.agenthub/config.json`, 'utf8');
+    const models = await server.tool('relay_models', { agent: 'codex' });
+    assert.equal(models.data.agents.codex.models.length, 3);
+    assert.equal(fs.readFileSync(`${dir}/.agenthub/config.json`, 'utf8'), config);
+    assert.equal((await server.tool('relay_models', { agent: 'cursor' })).data.error.code, 'unknown-agent');
+    await waitFor(async () => (await server.tool('relay_wait', { timeoutSeconds: 5 })).data.running.length === 0, { timeoutMs: 30_000, what: 'the review job' });
+  } finally {
+    await server.stop();
+    cleanup();
+  }
+});
+
 test('protocol errors and tool errors are reported the MCP way', async () => {
   const { dir, cleanup } = makeRepo();
   const server = startServer(dir);
   try {
+    useFakeExecutors(dir);
     const init = await server.call('initialize', { protocolVersion: '1999-01-01', capabilities: {}, clientInfo: { name: 'probe' } });
     assert.equal(init.result.protocolVersion, '2025-06-18');
     assert.deepEqual((await server.call('ping')).result, {});

@@ -11,6 +11,7 @@ export const PROTOCOL_VERSIONS = Object.freeze(['2025-06-18', '2025-03-26', '202
 
 export const INSTRUCTIONS = [
   'agenthub-relay hands coding jobs to other agents (Codex, Claude Code, DeepSeek Harness), each in its own git worktree.',
+  'First, once per planner session: call relay_session with action "start", show the user the saved roles and models it lists, ask whether to keep or change them, and call action "confirm" with their answer; dispatch works only in a confirmed session.',
   'Tiers: deep = complex work with a declared scope; light = simple, clearly specified work with 1-10 scope paths and at least one check command; review = read-only.',
   `After relay_dispatch: if the result says watcher.active, end your turn and you will be woken when the job ends; otherwise call relay_wait (it returns within ${MAX_WAIT_SECONDS} s) until a job finishes.`,
   'Then read relay_result and decide: relay_apply (changes land unstaged in your working tree) or relay_discard.',

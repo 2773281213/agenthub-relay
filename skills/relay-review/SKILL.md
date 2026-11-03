@@ -9,7 +9,7 @@ disable-model-invocation: true
 This thin entry uses the agenthub-relay skill in the sibling `../agenthub-relay` directory; read its SKILL.md for the commands and for `--planner`.
 
 1. Write the question as a self-contained review task: what to look at (files, a diff, a failing test), what to look for, and what form the answer should take.
-2. Dispatch one `review` tier job: `node ../agenthub-relay/scripts/cli.mjs dispatch --tier review --task-file - --planner <you>`, adding `--executor`, `--model` or `--effort` when the user named them.
+2. Dispatch one `review` tier job in your confirmed planner session: `node ../agenthub-relay/scripts/cli.mjs dispatch --session <id> --tier review --task-file - --planner <you>`, adding `--executor`, `--model` or `--effort` when the user named them. Without a session, start one as the agenthub-relay skill describes and let the user confirm it first.
 3. Wait for it, read `result`, and report its findings next to your own, saying where you agree and where you do not.
 
 A review job is read-only: any change it makes is reported out of scope and is never applied. Discard the job when you are done with it.

@@ -10,8 +10,9 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { parseArgs } from 'node:util';
 
-import { configLayers, configPath, loadConfig, PLANNER_IDS, plannerFromName, SETTABLE_KEYS, userConfigPath, writeSetting } from './config.mjs';
+import { configLayers, configPath, loadConfig, parseRoute, PLANNER_IDS, plannerFromName, SETTABLE_KEYS, userConfigPath, writeSetting } from './config.mjs';
 import { describeExecutors } from './executors.mjs';
+import { agentDefaults, assertRoute, catalogFor, MODEL_AGENTS } from './models.mjs';
 import { resolveCommand } from './platform.mjs';
 import { serveMcp } from './mcp.mjs';
 import { createStore, TERMINAL } from './store.mjs';
@@ -23,9 +24,19 @@ const CLI_MAX_WAIT_SECONDS = 3600;
 
 const HELP = `agenthub-relay ${VERSION}
 
-Planning (JSON on stdout; add --planner <claude|codex|dsh|agy> to say who you are):
+A planner session comes first (JSON on stdout; add --planner <claude|codex|dsh|agy> to say who you are):
+  agenthub-relay session start --planner <you> [--refresh]
+                 Lists the saved roles: each tier's executor, model and effort, each agent's own
+                 default model and the check of each. Show this to the user and ask.
+  agenthub-relay session confirm <sessionId> (--reuse | [--deep <route>] [--light <route>] [--review <route>]) [--user]
+                 Keep the saved roles, or check the user's changes and save them (route: executor[:model][@effort])
+  agenthub-relay session show [<sessionId>]
+
+Planning:
   agenthub-relay agents                      Executors, your profile and why, each tier's executor and model
-  agenthub-relay dispatch --tier <deep|light|review> (--task <text> | --task-file <file|->)
+  agenthub-relay models [codex|claude|dsh] [--refresh]   The models each agent offers and uses by default
+  agenthub-relay models check <agent> [<model>] [--effort <level>]
+  agenthub-relay dispatch --session <sessionId> --tier <deep|light|review> (--task <text> | --task-file <file|->)
                  [--scope <path>]... [--check <command>]... [--executor <id>]
                  [--model <name>] [--effort <level>] [--title <text>] [--acceptance <text>]
                  [--timeout-minutes <n>]
@@ -52,6 +63,7 @@ Other:
 
 Environment:
   AGENTHUB_RELAY_PLANNER       who is planning, when --planner is not given
+  AGENTHUB_RELAY_SESSION       the confirmed session, when --session is not given
   AGENTHUB_RELAY_PROFILE       force a profile
   AGENTHUB_RELAY_ROOT          repository to serve (default: CLAUDE_PROJECT_DIR, then the working directory)
   AGENTHUB_RELAY_CONFIG        project configuration file (default: <root>/.agenthub/config.json)
@@ -123,9 +135,11 @@ async function dispatch(args) {
     title: { type: 'string' },
     acceptance: { type: 'string' },
     'timeout-minutes': { type: 'string' },
+    session: { type: 'string' },
   });
   if (!values.tier) throw new UsageError('dispatch needs --tier <deep|light|review>');
   const request = {
+    session: values.session ?? (process.env.AGENTHUB_RELAY_SESSION || undefined),
     task: readTask(values),
     tier: values.tier,
     scope: values.scope,
@@ -187,25 +201,100 @@ function plannerOf(values) {
   return plannerFromName(values.planner ?? process.env.AGENTHUB_RELAY_PLANNER);
 }
 
+async function session(args) {
+  const [sub, ...rest] = args;
+  if (sub === 'start') {
+    const { values } = parse(rest, { refresh: { type: 'boolean' } });
+    const request = { action: 'start' };
+    if (values.planner) request.planner = values.planner;
+    if (values.refresh) request.refresh = true;
+    return tool(values.planner, 'relay_session', request);
+  }
+  if (sub === 'confirm') {
+    const { values, positionals } = parse(
+      rest,
+      { reuse: { type: 'boolean' }, deep: { type: 'string' }, light: { type: 'string' }, review: { type: 'string' }, user: { type: 'boolean' } },
+      { positionals: 'one' },
+    );
+    const request = { action: 'confirm', session: positionals[0] };
+    if (values.reuse) request.reuse = true;
+    for (const tier of ['deep', 'light', 'review']) if (values[tier] !== undefined) request[tier] = values[tier];
+    if (values.user) request.user = true;
+    return tool(values.planner, 'relay_session', request);
+  }
+  if (sub === 'show') {
+    const { values, positionals } = parse(rest, {}, { positionals: 'many' });
+    if (positionals.length > 1) throw new UsageError('session show takes at most one session id');
+    const request = { action: 'show' };
+    const id = positionals[0] ?? (process.env.AGENTHUB_RELAY_SESSION || undefined);
+    if (id) request.session = id;
+    return tool(values.planner, 'relay_session', request);
+  }
+  throw new UsageError('session start --planner <you> | session confirm <sessionId> (--reuse | --deep/--light/--review <route>) | session show [<sessionId>]');
+}
+
+async function models(args) {
+  if (args[0] === 'check') {
+    const { values, positionals } = parse(args.slice(1), { effort: { type: 'string' }, refresh: { type: 'boolean' } }, { positionals: 'many' });
+    if (positionals.length < 1 || positionals.length > 2) throw new UsageError('models check <agent> [<model>] [--effort <level>]');
+    const [agent, model] = positionals;
+    const root = await rootOrNull();
+    const settings = loadConfig({ root: root ?? undefined, env: process.env, planner: plannerOf(values) });
+    const entry = await catalogFor(agent, { env: process.env, root: root ?? undefined, config: settings, refresh: values.refresh === true, clientVersion: VERSION });
+    const route = { executor: agent, ...(model ? { model } : {}), ...(values.effort ? { effort: values.effort } : {}) };
+    const check = assertRoute(route, entry, agent);
+    print({ agent, ...(model ? { model } : {}), ...(values.effort ? { effort: values.effort } : {}), ...check, default: entry.default });
+    return 0;
+  }
+  const { values, positionals } = parse(args, { refresh: { type: 'boolean' } }, { positionals: 'many' });
+  if (positionals.length > 1) throw new UsageError('models [codex|claude|dsh] [--refresh]');
+  const request = positionals.length ? { agent: positionals[0] } : {};
+  if (values.refresh) request.refresh = true;
+  return tool(values.planner, 'relay_models', request);
+}
+
+/** Checks the model and effort a setting would give a route, the way session confirm does. */
+async function checkSettingModel(key, value, root) {
+  let route;
+  const tierKey = /^profiles\.[A-Za-z0-9_-]+\.(deep|light|review)$/.exec(key);
+  const executorKey = /^executors\.([a-z]+)\.(model|effort)$/.exec(key);
+  if (tierKey) {
+    const parsed = parseRoute(value);
+    route = typeof parsed === 'string' ? { executor: parsed } : parsed;
+    if (route.model === undefined && route.effort === undefined) return;
+  } else if (executorKey) {
+    route = { executor: executorKey[1], [executorKey[2]]: value };
+  } else {
+    return;
+  }
+  if (!MODEL_AGENTS.includes(route.executor)) return;
+  const settings = loadConfig({ root: root ?? undefined, env: process.env });
+  const entry = await catalogFor(route.executor, { env: process.env, root: root ?? undefined, config: settings, clientVersion: VERSION });
+  assertRoute(route, entry, key);
+}
+
 async function config(args) {
   const [sub, ...rest] = args;
   if (sub === 'show') {
     const { values } = parse(rest, { json: { type: 'boolean' } });
     const root = await rootOrNull();
     const settings = loadConfig({ root: root ?? undefined, env: process.env, planner: plannerOf(values) });
+    const defaults = agentDefaults({ env: process.env, root: root ?? undefined });
     const report = {
       root,
       planner: settings.planner,
       profile: settings.profile,
       profileReason: settings.profileReason,
+      sessionsRequired: settings.sessions.required,
       files: { user: userConfigPath(process.env), project: root ? configPath(root, process.env) : null, applied: settings.sources },
       routes: Object.fromEntries(Object.entries(settings.routes).map(([tier, route]) => {
         const executor = settings.executors[route.executor];
         return [tier, { ...route, model: route.model ?? executor?.model, effort: route.effort ?? executor?.effort }];
       })),
+      agentDefaults: defaults,
       plannerProfiles: settings.plannerProfiles,
       profiles: Object.keys(settings.profiles),
-      executors: describeExecutors(settings, process.env),
+      executors: describeExecutors(settings, process.env, defaults),
     };
     if (values.json) {
       print(report);
@@ -215,7 +304,8 @@ async function config(args) {
       `planner: ${report.planner}${report.planner === 'unknown' ? ' (pass --planner or set AGENTHUB_RELAY_PLANNER)' : ''}`,
       `profile: ${report.profile} (${report.profileReason})`,
       'tiers:',
-      ...Object.entries(report.routes).map(([tier, r]) => `  ${tier.padEnd(7)} ${r.executor}${r.model ? `  model ${r.model}` : '  model: executor default'}${r.effort ? `  effort ${r.effort}` : ''}`),
+      ...Object.entries(report.routes).map(([tier, r]) => `  ${tier.padEnd(7)} ${r.executor}${r.model ? `  model ${r.model}` : `  model: ${ownDefault(report.agentDefaults[r.executor], r.executor)}`}${r.effort ? `  effort ${r.effort}` : ''}`),
+      `sessions: ${report.sessionsRequired ? 'required (start and confirm a planner session before dispatching)' : 'not required'}`,
       `planner profiles: ${Object.entries(report.plannerProfiles).map(([p, name]) => `${p}->${name}`).join(', ')}`,
       `profiles: ${report.profiles.join(', ')}`,
       `files applied: ${report.files.applied.length ? report.files.applied.join(', ') : 'none (built-in defaults)'}`,
@@ -243,11 +333,18 @@ async function config(args) {
       layersBelow = configLayers({ env: process.env }).filter(layer => layer.file !== file);
     }
     const [key, value] = positionals;
+    if (sub === 'set') await checkSettingModel(key, value, await rootOrNull());
     const written = writeSetting({ file, key, value, unset: sub === 'unset', layersBelow });
     print(written);
     return 0;
   }
   throw new UsageError('config show | config set <key> <value> | config unset <key>');
+}
+
+/** "codex's own default, gpt-5.1-codex (from ~/.codex/config.toml)" or the built-in default. */
+function ownDefault(def, agent) {
+  if (!def?.model) return `${agent}'s built-in default`;
+  return `${agent}'s own default, ${def.model}${def.modelFrom ? ` (from ${def.modelFrom})` : ''}`;
 }
 
 function versionOf(command) {
@@ -278,7 +375,8 @@ async function doctor(args) {
     report.profile = settings.profile;
     report.profileReason = settings.profileReason;
     report.mapping = settings.mapping;
-    report.executors = describeExecutors(settings, process.env).map(entry =>
+    report.sessionsRequired = settings.sessions.required;
+    report.executors = describeExecutors(settings, process.env, agentDefaults({ env: process.env, root: report.root })).map(entry =>
       entry.available ? { ...entry, version: versionOf(entry.command) } : entry,
     );
   } catch (err) {
@@ -299,11 +397,15 @@ async function doctor(args) {
     for (const entry of report.executors) {
       const tiers = entry.tiers.length ? ` [${entry.tiers.join(', ')}]` : '';
       if (entry.reserved) lines.push(`  ${entry.id.padEnd(7)} reserved   ${entry.reason}${tiers}`);
-      else if (entry.available) lines.push(`  ${entry.id.padEnd(7)} available  ${entry.path}${entry.via === 'direct' ? '' : ` (${entry.via})`}${entry.version ? `  ${entry.version}` : ''}${tiers}`);
+      else if (entry.available) {
+        lines.push(`  ${entry.id.padEnd(7)} available  ${entry.path}${entry.via === 'direct' ? '' : ` (${entry.via})`}${entry.version ? `  ${entry.version}` : ''}${tiers}`);
+        lines.push(`          model: ${entry.model ?? ownDefault(entry.agentDefault, entry.id)}`);
+      }
       else if (entry.problem) lines.push(`  ${entry.id.padEnd(7)} unusable   ${entry.problem}${tiers}`);
       else lines.push(`  ${entry.id.padEnd(7)} missing    "${entry.command}" is not on PATH${tiers}`);
     }
   }
+  if (!report.configError) lines.push(`planner sessions: ${report.sessionsRequired ? 'required' : 'not required'}`);
   lines.push(`CLAUDE_CODE_PROMPT_CACHE_TTL: ${report.promptCacheTtl ?? 'unset (Claude Code default for your account)'}`);
   process.stdout.write(`${lines.join('\n')}\n`);
   return 0;
@@ -331,6 +433,10 @@ async function main(argv) {
     }
     case 'agents':
       return tool(parse(rest, {}).values.planner, 'relay_agents', {});
+    case 'session':
+      return session(rest);
+    case 'models':
+      return models(rest);
     case 'dispatch':
       return dispatch(rest);
     case 'wait':
