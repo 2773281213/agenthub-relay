@@ -1,12 +1,12 @@
 {
  "schemaVersion": "2",
  "project": "agenthub-relay",
- "revision": "2026-11-03-arch-review-3",
+ "revision": "2026-11-03-arch-review-4",
  "sourceRevision": "0d7e1173c11849fe03e51522a3e997b6c7a28db2",
  "workingTree": {
   "dirty": []
  },
- "baseline": "评审 v0.3 计划“指定规划者和三档执行者，读取、核对并填入模型”在架构上的落点；上一轮的 skill-cli 已实现，installer 候选仍未做。",
+ "baseline": "按用户修订后的要求重评第 3 版：不再写任何 agent 的配置文件，dsh 使用它自己的配置；分工与模型改为每个规划者会话开始时列出已保存配置、由用户确认沿用或修改。",
  "sources": [
   {
    "kind": "rule",
@@ -29,22 +29,22 @@
   "mapId": "agenthub-relay-system",
   "revision": 7
  },
- "scope": "只评估模型知识与规划者身份放在哪里：检查了 src/config.mjs、src/policy.mjs、src/tools.mjs、src/cli.mjs、src/executors.mjs、skills/relay-config/SKILL.md。执行、隔离与 worker 不在本轮范围。",
+ "scope": "只评估模型知识与规划者会话放在哪里：检查了 src/config.mjs、src/policy.mjs、src/tools.mjs、src/cli.mjs、src/executors.mjs、skills/relay-config/SKILL.md。执行、隔离与 worker 不在本轮范围。",
  "gaps": [
-  "codex app-server 的 model/list、claude 的模型别名与 dsh 的 agent-default-model 来自官方文档，没有在真实 CLI 上调用验证；dsh --dump-config 的输出格式未知。",
-  "写入各家配置是否与它们自身的热加载冲突（例如正在运行的会话覆盖文件）未验证。"
+  "codex app-server 的 model/list、claude 的模型别名与 dsh 的 agent-default-model 来自官方文档，没有在真实 CLI 上调用验证。",
+  "relay 无法证明规划者在确认前真的问过用户；这一步由 skill 指令约束，不由程序保证。"
  ],
  "language": "zh",
  "recommendation": {
   "candidate": "model-catalog",
-  "reason": "获取、核对、填入模型都依赖它，且需要一个独立模块承担与三家 CLI 和配置文件打交道的复杂度；planner-designation 改动小，依赖同一个 roles set 入口，两者在同一轮实现。"
+  "reason": "会话确认要列出并核对模型，依赖模型目录先就位；planner-session 建在它之上，两者在同一轮按顺序实现。"
  },
  "candidates": [
   {
    "id": "model-catalog",
    "title": "模型写错要等任务跑起来才发现",
-   "lede": "relay 对模型只检查字符格式：不知道各家实际有哪些模型、默认用哪个，dsh 因为没有按次选模型的参数被一律拒绝，规划者自己的模型只能到各家程序里手改。",
-   "impact": "把 codex 的模型名写错、给某个模型配了它不支持的推理强度，要等任务启动后才失败，白白占一个 worktree 和一次等待；想让 dsh 换模型、或统一规划者与执行者的模型，只能自己去翻三家不同格式的配置文件。",
+   "lede": "relay 对模型只检查字符格式：不知道各家实际有哪些模型、默认用哪个；没配置模型时只显示空白，规划者和 dsh 实际用的模型要到各家程序的配置里去查。",
+   "impact": "把 codex 的模型名写错、给模型配了不支持的推理强度，要等任务启动后才失败，白占一个 worktree 和一次等待；开会话时也说不清每个档位实际会用哪个模型。",
    "strength": "strong",
    "dependency": "local-substitutable",
    "modules": [
@@ -82,7 +82,7 @@
       "end": 126
      },
      "quote": "function selectModel({ request, route, executor, executorConfig }) {\n  const fromRoute = route?.executor === executor ? route : {};\n  const model = cleanName(request.model, 'model') ?? fromRoute.model ?? executorConfig.model;\n  const effort = cleanName(request.effort, 'effort') ?? fromRoute.effort ?? executorConfig.effort;\n  if (model !== undefined && !executorConfig.modelArgs?.length) {\n    throw new PolicyError(\n      'model-unsupported',\n      `The ${executor} executor has no documented flag for choosing a model; set its model in ${executor}'s own settings, or configure executors.${executor}.modelArgs`,\n      { executor, model },\n    );\n  }\n  if (effort !== undefined && !executorConfig.effortArgs?.length) {\n    throw new PolicyError(\n      'effort-unsupported',\n      `The ${executor} executor has no flag for reasoning effort; configure executors.${executor}.effortArgs to use one`,\n      { executor, effort },\n    );\n  }\n  return { model, effort };",
-     "note": "按有无参数模板一刀切",
+     "note": "拒绝 dsh 时说不出它在用什么",
      "symbol": "selectModel"
     },
     {
@@ -102,7 +102,7 @@
       "end": 19
      },
      "quote": "DeepSeek Harness has no documented flag for choosing a model: the relay refuses a model for it, and its model is set in DeepSeek Harness's own settings. Credentials (`passEnv`) are not settable here; they are edited by hand and hold variable names only. This skill cannot change the planner's own model; in Claude Code that is `/model`.",
-     "note": "规划者的模型改不了"
+     "note": "规划者与 dsh 的模型要自己去查"
     },
     {
      "path": "src/config.mjs",
@@ -116,7 +116,7 @@
     }
    ],
    "before": {
-    "caption": "模型名只过格式检查；写错、强度不支持、dsh 默认不对，都要到运行时才暴露，规划者的模型得手改。",
+    "caption": "模型名只过格式检查；写错、强度不支持都要到运行时才暴露，各家默认用哪个模型要自己翻配置文件。",
     "nodes": [
      {
       "id": "user",
@@ -131,8 +131,8 @@
       "evidence": []
      },
      {
-      "id": "hostedit",
-      "label": "手改各家设置文件",
+      "id": "hostlook",
+      "label": "去各家配置里查默认",
       "kind": "step",
       "row": 0,
       "column": 2,
@@ -172,7 +172,7 @@
      },
      {
       "id": "select",
-      "label": "selectModel：dsh 一律拒绝",
+      "label": "selectModel",
       "kind": "step",
       "row": 2,
       "column": 0,
@@ -198,7 +198,7 @@
      },
      {
       "id": "hosts",
-      "label": "各家设置文件",
+      "label": "各家配置文件",
       "kind": "external",
       "row": 3,
       "column": 2,
@@ -215,11 +215,11 @@
      },
      {
       "from": "user",
-      "to": "hostedit",
-      "label": "规划者模型"
+      "to": "hostlook",
+      "label": "手动查"
      },
      {
-      "from": "hostedit",
+      "from": "hostlook",
       "to": "hosts"
      },
      {
@@ -238,7 +238,7 @@
     ]
    },
    "after": {
-    "caption": "写入前就按各家真实的模型列表核对；默认模型和核对状态一起显示；规划者与 dsh 的默认模型由同一个模块备份后写入。",
+    "caption": "写入前和开会话时就按各家真实的模型列表核对；各家默认模型与核对结果一起显示；relay 只读各家配置，从不写。",
     "nodes": [
      {
       "id": "user",
@@ -254,7 +254,7 @@
      },
      {
       "id": "config",
-      "label": "config set / roles set",
+      "label": "config set / 会话确认",
       "kind": "module",
       "row": 1,
       "column": 0,
@@ -277,7 +277,7 @@
      },
      {
       "id": "catalog",
-      "label": "模型目录：列表、核对、默认、写入",
+      "label": "模型目录：列表、核对、读默认",
       "kind": "deep",
       "row": 2,
       "column": 1,
@@ -288,12 +288,12 @@
       ],
       "evidence": [],
       "absorbs": [
-       "hostedit"
+       "hostlook"
       ]
      },
      {
       "id": "select",
-      "label": "selectModel：dsh 比对默认",
+      "label": "selectModel",
       "kind": "step",
       "row": 2,
       "column": 0,
@@ -316,7 +316,7 @@
      },
      {
       "id": "hosts",
-      "label": "各家设置文件",
+      "label": "各家配置文件",
       "kind": "external",
       "row": 4,
       "column": 2,
@@ -356,7 +356,7 @@
      {
       "from": "catalog",
       "to": "hosts",
-      "label": "备份写入"
+      "label": "只读"
      },
      {
       "from": "select",
@@ -387,20 +387,6 @@
      "detail": "MODEL_NAME 只限制字符和长度，config set 写入 executors.*.model 时直接接受；relay 与各家 CLI 之间没有一处去问“这个模型存在吗、支持这个推理强度吗”，所以写错只能在任务运行时由执行者报错。"
     },
     {
-     "id": "f-dsh-blanket",
-     "kind": "shallow",
-     "note": "dsh 一律拒绝",
-     "targets": [
-      "select"
-     ],
-     "evidence": [
-      1,
-      2
-     ],
-     "confidence": "observed",
-     "detail": "selectModel 只看执行者有没有 modelArgs 模板：dsh 没有，就拒绝任何模型。它不知道 dsh 当前默认用的是什么，于是“档位要求 dsh 用 X、而 dsh 恰好就在用 X”这种合理设置也写不进去。"
-    },
-    {
      "id": "f-no-default",
      "kind": "missing-seam",
      "note": "看不到默认模型",
@@ -409,24 +395,26 @@
       "clis"
      ],
      "evidence": [
+      1,
+      2,
       3
      ],
      "confidence": "observed",
-     "detail": "describeExecutors 只回显 relay 配置里的 model 和 effort；没配置时用户只看到空白，不知道 codex、claude、dsh 各自实际会用哪个模型。"
+     "detail": "describeExecutors 只回显 relay 配置里的 model 和 effort，没配置时只有空白；selectModel 拒绝给 dsh 指定模型时，也说不出 dsh 当前用的是哪个。用户不知道 codex、claude、dsh 各自实际会用哪个模型。"
     },
     {
-     "id": "f-planner-hand",
+     "id": "f-look-by-hand",
      "kind": "missing-seam",
-     "note": "规划者模型手改",
+     "note": "默认要自己查",
      "targets": [
       "user",
-      "hostedit"
+      "hostlook"
      ],
      "evidence": [
       4
      ],
      "confidence": "observed",
-     "detail": "relay-config skill 写明改不了规划者自己的模型；三家的模型分别在 TOML、JSON、YAML 里，键名各不相同，用户要逐家手改，改错也没有核对。"
+     "detail": "relay-config skill 只能告诉用户“去各家自己的设置里改”；三家的模型分别在 TOML、JSON、YAML 里，键名各不相同，用户要逐家打开文件才知道当前用的是什么。"
     }
    ],
    "callerKnowledge": {
@@ -434,52 +422,49 @@
      "各家有哪些模型",
      "强度支持哪些",
      "三家配置路径",
-     "dsh 只认默认",
      "写错运行才知"
     ],
     "after": [
-     "models 列表",
-     "roles set"
+     "models 列表"
     ]
    },
-   "solution": "新增按 agent id 适配的模型目录模块（models、hostconfig、yaml-lite）：从各家取模型列表和当前默认，供 config set、roles set、派发和显示共用核对，并负责带备份地写入各家的默认模型。",
+   "solution": "新增按 agent id 适配的只读模型目录（models、yaml-lite）：取各家可用模型和当前默认，供 config set、会话确认、派发和显示共用核对；不写任何 agent 的配置文件。",
    "deletionTest": {
     "verdict": "keep",
-    "text": "去掉模型目录，复杂度回到用户身上：逐家查模型名、手改三种格式的配置、等运行时报错；这是新增的必要复杂度，不是可删的中间层。"
+    "text": "去掉模型目录，复杂度回到用户身上：逐家查模型名和默认值、等运行时报错；这是新增的必要复杂度，不是可删的中间层。"
    },
    "wins": [
     {
      "kind": "leverage",
-     "text": "写入前就发现写错的模型和推理强度"
+     "text": "写入前、开会话时就发现写错的模型和推理强度"
     },
     {
      "kind": "locality",
-     "text": "三家模型列表、默认值和配置写法集中在一处"
+     "text": "三家模型列表和默认值的读取集中在一处"
     },
     {
      "kind": "testability",
-     "text": "用假 app-server、假 dump 和临时配置文件即可测"
+     "text": "用假 app-server 和临时配置文件即可测"
     }
    ],
    "verification": [
-    "config set 写入 codex 不存在的模型被拒，文件不变",
-    "dsh 默认与档位一致时派发成功，不一致时 model-mismatch",
-    "models set-default 写前留备份，--dry-run 不改任何文件",
-    "AGENTHUB_RELAY_ROLE=executor 时一切写入被拒"
+    "会话确认与 config set 写入 codex 不存在的模型被拒，文件不变",
+    "给 dsh 指定模型被拒，错误信息带出它当前的默认模型",
+    "models 与 agents 读取后，各家配置文件的内容与修改时间不变"
    ],
    "boundaries": [
     "现有 relay_* 工具的名称与参数",
     "零运行时依赖",
     "不写入任何密钥或环境变量的值",
-    "派发时不改任何 agent 的配置"
+    "不写任何 agent 的配置文件"
    ],
-   "cost": "中到偏高：新增三个模块约 500 行与测试。风险在写别家的配置文件（必须只改目标键、写前备份、可预览），codex app-server 协议官方标为不稳定，dsh 只能读 YAML 子集。"
+   "cost": "中等：新增两个模块约 350 行与测试。风险在于 codex app-server 协议官方标为不稳定、各家配置路径会变，失败时只能报“无法获取”，所以核对结果要分出“已核对 / 只查格式 / 未知”。"
   },
   {
-   "id": "planner-designation",
-   "title": "规划者只能被识别，不能被指定",
-   "lede": "规划者身份由 --planner、环境变量或 MCP 客户端名识别出来，只用于选 profile 和写进任务记录；配置里没有“谁是规划者”，派发护栏也拿不到这个身份。",
-   "impact": "用户想固定由 Codex 规划、其他 agent 只执行时，没有地方能写下这个决定；换个会话误用 Claude Code 派发，relay 照样接受，路由也悄悄换成另一套 profile。",
+   "id": "planner-session",
+   "title": "谁规划、用哪些执行者，没人确认",
+   "lede": "规划者身份由 --planner、环境变量或 MCP 客户端名识别出来，只用于选 profile；会话开始时没有任何一步把当前的分工和模型告诉用户，派发护栏也拿不到这个身份。",
+   "impact": "换一个 agent 开会话，relay 照样接受派发，悄悄换成另一套路由；用户不知道这次 deep、light、review 各会交给谁、用什么模型，发现分工不对时任务已经跑完了。",
    "strength": "strong",
    "dependency": "in-process",
    "modules": [
@@ -535,12 +520,12 @@
       "end": 62
      },
      "quote": "const TOP_KEYS = ['profile', 'profiles', 'plannerProfiles', 'executors', 'checks', 'light'];",
-     "note": "配置里没有 planner 键",
+     "note": "配置里没有规划者与会话",
      "symbol": "TOP_KEYS"
     }
    ],
    "before": {
-    "caption": "谁来派发都行：识别出的身份只决定用哪套路由，换了规划者也不会有任何提示。",
+    "caption": "谁来派发都行：识别出的身份只决定用哪套路由，用户从头到尾没有确认过分工和模型。",
     "nodes": [
      {
       "id": "callers",
@@ -630,7 +615,7 @@
     ]
    },
    "after": {
-    "caption": "配置里写明规划者：识别不出时按它处理，识别出的是别人时派发被拒；路由与模型由 roles set 一次写好。",
+    "caption": "每个规划者会话先列出已保存的分工与模型，用户确认沿用或修改后才能派发；会话之外、或换了 agent 的派发被拒。",
     "nodes": [
      {
       "id": "callers",
@@ -644,13 +629,13 @@
       "evidence": []
      },
      {
-      "id": "setting",
-      "label": "planner 设置（roles set）",
+      "id": "session",
+      "label": "会话：列出配置、用户确认",
       "kind": "step",
       "row": 0,
       "column": 1,
       "modules": [
-       "dispatch-policy"
+       "planner-surface"
       ],
       "evidence": []
      },
@@ -667,7 +652,7 @@
      },
      {
       "id": "profile",
-      "label": "按身份选 profile",
+      "label": "已保存的 profile",
       "kind": "step",
       "row": 1,
       "column": 1,
@@ -678,7 +663,7 @@
      },
      {
       "id": "guard",
-      "label": "planDispatch：角色与规划者护栏",
+      "label": "planDispatch：角色、会话、规划者护栏",
       "kind": "module",
       "row": 2,
       "column": 0,
@@ -707,13 +692,14 @@
       "to": "identify"
      },
      {
-      "from": "setting",
-      "to": "identify",
-      "label": "识别不出时"
+      "from": "callers",
+      "to": "session",
+      "label": "开会话"
      },
      {
-      "from": "identify",
-      "to": "profile"
+      "from": "session",
+      "to": "profile",
+      "label": "列出与保存"
      },
      {
       "from": "identify",
@@ -721,14 +707,9 @@
       "label": "识别出的身份"
      },
      {
-      "from": "setting",
+      "from": "session",
       "to": "guard",
-      "label": "指定的规划者"
-     },
-     {
-      "from": "profile",
-      "to": "guard",
-      "label": "路由"
+      "label": "快照"
      },
      {
       "from": "guard",
@@ -737,16 +718,16 @@
     ],
     "seams": [
      {
-      "label": "planner-mismatch 在策略层判定",
+      "label": "会话与规划者护栏在策略层",
       "below": "guard"
      }
     ]
    },
    "findings": [
     {
-     "id": "f-identity-only",
+     "id": "f-no-confirm",
      "kind": "missing-seam",
-     "note": "没有指定入口",
+     "note": "没有确认环节",
      "targets": [
       "callers",
       "identify"
@@ -757,7 +738,7 @@
       4
      ],
      "confidence": "observed",
-     "detail": "MCP 与 CLI 两条入口都只做识别，配置的顶层键里没有 planner；用户无法声明“由谁规划”，只能在每次调用时传参或设环境变量。"
+     "detail": "MCP 与 CLI 两条入口都只做识别，配置里没有规划者，也没有会话；会话开始时没有一步把当前的分工和模型告诉用户、等用户决定沿用还是修改。"
     },
     {
      "id": "f-guard-blind",
@@ -772,7 +753,7 @@
       2
      ],
      "confidence": "observed",
-     "detail": "识别出的身份只交给 buildConfig 选 profile，planDispatch 收不到它，护栏只认 AGENTHUB_RELAY_ROLE。把规划者校验放进 planDispatch，CLI 与 MCP 两条入口共用同一处判定，与执行者角色护栏并列。"
+     "detail": "识别出的身份只交给 buildConfig 选 profile，planDispatch 收不到它，护栏只认 AGENTHUB_RELAY_ROLE。把会话与规划者校验放进 planDispatch，CLI 与 MCP 两条入口共用同一处判定，与执行者角色护栏并列。"
     }
    ],
    "callerKnowledge": {
@@ -780,38 +761,40 @@
      "--planner 参数",
      "客户端名规则",
      "按规划者的路由",
-     "每次都要传"
+     "分工靠记忆"
     ],
     "after": [
-     "roles set"
+     "开会话并确认",
+     "派发带会话 id"
     ]
    },
-   "solution": "配置新增 planner 键并由 roles set 写入；buildConfig 在识别不出时用它，planDispatch 收到识别身份与指定规划者，不符时以 planner-mismatch 拒绝。",
+   "solution": "新增 session 模块：start 列出已保存的规划者、三档执行者与模型并等待用户确认，confirm 沿用或核对后保存；planDispatch 收到会话与识别身份，没有确认的会话以 session-required、身份不符以 planner-mismatch 拒绝。",
    "deletionTest": {
     "verdict": "keep",
-    "text": "没有这个设置，“由谁规划”只能靠每次调用时的参数维持，误用另一个会话派发不会被发现；校验必须放在派发策略里才对两条入口都生效。"
+    "text": "没有会话，“由谁规划、用哪些执行者和模型”只能靠每次调用时的参数和用户的记忆维持；确认与校验必须落在派发策略里，才对两条入口都生效。"
    },
    "wins": [
     {
      "kind": "locality",
-     "text": "规划者校验与执行者角色护栏放在同一处"
+     "text": "会话、规划者与执行者角色护栏放在同一处"
     },
     {
      "kind": "leverage",
-     "text": "一条 roles set 写好规划者、三档执行者和模型"
+     "text": "每个会话开头一次确认，之后派发不再重复传路由"
     }
    ],
    "verification": [
-    "planner 设为 codex 时，claude 身份派发返回 planner-mismatch",
-    "识别不出身份时按 codex 处理并在任务记录里标 assumed",
-    "未设置 planner 时现有派发行为不变"
+    "没有确认的会话时派发返回 session-required",
+    "codex 开的会话，claude 身份派发返回 planner-mismatch",
+    "确认后改配置文件，已确认会话的路由快照不变",
+    "sessions.required 设为 false 时派发行为与 v0.2 相同"
    ],
    "boundaries": [
     "身份识别的现有顺序",
-    "plannerProfiles 与 profile 的优先级",
+    "profile 与 plannerProfiles 的优先级",
     "relay_wait、apply 等非派发工具"
    ],
-   "cost": "小：config 新增一个键，planDispatch 多一个参数和一条护栏，tools 与 CLI 传入识别身份；主要风险是已有用户设置后忘记，所以错误信息要写明如何修改。"
+   "cost": "中等：每次派发都要带会话（MCP 由进程保存），现有测试的准备步骤要先开会话；MCP 服务重启后要重新确认。relay 只能强制“先开会话再确认”，规划者是否真的问过用户要靠 skill 约束。"
   }
  ]
 }

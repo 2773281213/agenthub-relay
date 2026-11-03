@@ -1,0 +1,817 @@
+{
+ "schemaVersion": "2",
+ "project": "agenthub-relay",
+ "revision": "2026-11-03-arch-review-3",
+ "sourceRevision": "0d7e1173c11849fe03e51522a3e997b6c7a28db2",
+ "workingTree": {
+  "dirty": []
+ },
+ "baseline": "评审 v0.3 计划“指定规划者和三档执行者，读取、核对并填入模型”在架构上的落点；上一轮的 skill-cli 已实现，installer 候选仍未做。",
+ "sources": [
+  {
+   "kind": "rule",
+   "path": "AGENTS.md"
+  },
+  {
+   "kind": "doc",
+   "path": "docs/design.md"
+  },
+  {
+   "kind": "doc",
+   "path": "docs/planners.md"
+  },
+  {
+   "kind": "doc",
+   "path": "skills/relay-config/SKILL.md"
+  }
+ ],
+ "architectureBinding": {
+  "mapId": "agenthub-relay-system",
+  "revision": 7
+ },
+ "scope": "只评估模型知识与规划者身份放在哪里：检查了 src/config.mjs、src/policy.mjs、src/tools.mjs、src/cli.mjs、src/executors.mjs、skills/relay-config/SKILL.md。执行、隔离与 worker 不在本轮范围。",
+ "gaps": [
+  "codex app-server 的 model/list、claude 的模型别名与 dsh 的 agent-default-model 来自官方文档，没有在真实 CLI 上调用验证；dsh --dump-config 的输出格式未知。",
+  "写入各家配置是否与它们自身的热加载冲突（例如正在运行的会话覆盖文件）未验证。"
+ ],
+ "language": "zh",
+ "recommendation": {
+  "candidate": "model-catalog",
+  "reason": "获取、核对、填入模型都依赖它，且需要一个独立模块承担与三家 CLI 和配置文件打交道的复杂度；planner-designation 改动小，依赖同一个 roles set 入口，两者在同一轮实现。"
+ },
+ "candidates": [
+  {
+   "id": "model-catalog",
+   "title": "模型写错要等任务跑起来才发现",
+   "lede": "relay 对模型只检查字符格式：不知道各家实际有哪些模型、默认用哪个，dsh 因为没有按次选模型的参数被一律拒绝，规划者自己的模型只能到各家程序里手改。",
+   "impact": "把 codex 的模型名写错、给某个模型配了它不支持的推理强度，要等任务启动后才失败，白白占一个 worktree 和一次等待；想让 dsh 换模型、或统一规划者与执行者的模型，只能自己去翻三家不同格式的配置文件。",
+   "strength": "strong",
+   "dependency": "local-substitutable",
+   "modules": [
+    "dispatch-policy",
+    "executor-adapters",
+    "planner-surface",
+    "executor-clis",
+    "planner-hosts"
+   ],
+   "evidence": [
+    {
+     "path": "src/config.mjs",
+     "lines": {
+      "start": 31,
+      "end": 32
+     },
+     "quote": "/** Model and effort names: no spaces or shell syntax, at most 100 characters. */\nexport const MODEL_NAME = /^[A-Za-z0-9._:/@+-]{1,100}$/;",
+     "note": "只检查字符，不知道有哪些模型",
+     "symbol": "MODEL_NAME"
+    },
+    {
+     "path": "src/config.mjs",
+     "lines": {
+      "start": 55,
+      "end": 56
+     },
+     "quote": "    // dsh documents no per-run model flag: its model is set in its own settings.\n    dsh: { command: 'dsh', passEnv: [], timeoutMinutes: 30, extraArgs: [], modelArgs: [], effortArgs: [] },",
+     "note": "dsh 的模型在它自己的设置里",
+     "symbol": "DEFAULT_CONFIG"
+    },
+    {
+     "path": "src/policy.mjs",
+     "lines": {
+      "start": 108,
+      "end": 126
+     },
+     "quote": "function selectModel({ request, route, executor, executorConfig }) {\n  const fromRoute = route?.executor === executor ? route : {};\n  const model = cleanName(request.model, 'model') ?? fromRoute.model ?? executorConfig.model;\n  const effort = cleanName(request.effort, 'effort') ?? fromRoute.effort ?? executorConfig.effort;\n  if (model !== undefined && !executorConfig.modelArgs?.length) {\n    throw new PolicyError(\n      'model-unsupported',\n      `The ${executor} executor has no documented flag for choosing a model; set its model in ${executor}'s own settings, or configure executors.${executor}.modelArgs`,\n      { executor, model },\n    );\n  }\n  if (effort !== undefined && !executorConfig.effortArgs?.length) {\n    throw new PolicyError(\n      'effort-unsupported',\n      `The ${executor} executor has no flag for reasoning effort; configure executors.${executor}.effortArgs to use one`,\n      { executor, effort },\n    );\n  }\n  return { model, effort };",
+     "note": "按有无参数模板一刀切",
+     "symbol": "selectModel"
+    },
+    {
+     "path": "src/executors.mjs",
+     "lines": {
+      "start": 253,
+      "end": 256
+     },
+     "quote": "      model: cfg.model,\n      effort: cfg.effort,\n      choosesModel: (cfg.modelArgs ?? []).length > 0,\n      choosesEffort: (cfg.effortArgs ?? []).length > 0,",
+     "note": "只报配置值，看不到各家默认",
+     "symbol": "describeExecutors"
+    },
+    {
+     "path": "skills/relay-config/SKILL.md",
+     "lines": {
+      "start": 19,
+      "end": 19
+     },
+     "quote": "DeepSeek Harness has no documented flag for choosing a model: the relay refuses a model for it, and its model is set in DeepSeek Harness's own settings. Credentials (`passEnv`) are not settable here; they are edited by hand and hold variable names only. This skill cannot change the planner's own model; in Claude Code that is `/model`.",
+     "note": "规划者的模型改不了"
+    },
+    {
+     "path": "src/config.mjs",
+     "lines": {
+      "start": 379,
+      "end": 379
+     },
+     "quote": "  { pattern: /^executors\\.([a-z]+)\\.(model|effort|command)$/, parse: value => value },",
+     "note": "写入模型时不核对",
+     "symbol": "SETTABLE"
+    }
+   ],
+   "before": {
+    "caption": "模型名只过格式检查；写错、强度不支持、dsh 默认不对，都要到运行时才暴露，规划者的模型得手改。",
+    "nodes": [
+     {
+      "id": "user",
+      "label": "用户 / 规划者",
+      "kind": "caller",
+      "row": 0,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "planner-hosts"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "hostedit",
+      "label": "手改各家设置文件",
+      "kind": "step",
+      "row": 0,
+      "column": 2,
+      "modules": [
+       "planner-hosts"
+      ],
+      "evidence": [
+       4
+      ]
+     },
+     {
+      "id": "config",
+      "label": "config set：只查格式",
+      "kind": "module",
+      "row": 1,
+      "column": 0,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": [
+       0,
+       5
+      ]
+     },
+     {
+      "id": "describe",
+      "label": "agents：只显示配置值",
+      "kind": "module",
+      "row": 1,
+      "column": 1,
+      "modules": [
+       "executor-adapters"
+      ],
+      "evidence": [
+       3
+      ]
+     },
+     {
+      "id": "select",
+      "label": "selectModel：dsh 一律拒绝",
+      "kind": "step",
+      "row": 2,
+      "column": 0,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": [
+       1,
+       2
+      ]
+     },
+     {
+      "id": "clis",
+      "label": "codex / claude / dsh",
+      "kind": "external",
+      "row": 3,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "executor-clis"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "hosts",
+      "label": "各家设置文件",
+      "kind": "external",
+      "row": 3,
+      "column": 2,
+      "modules": [
+       "planner-hosts"
+      ],
+      "evidence": []
+     }
+    ],
+    "edges": [
+     {
+      "from": "user",
+      "to": "config"
+     },
+     {
+      "from": "user",
+      "to": "hostedit",
+      "label": "规划者模型"
+     },
+     {
+      "from": "hostedit",
+      "to": "hosts"
+     },
+     {
+      "from": "config",
+      "to": "select"
+     },
+     {
+      "from": "select",
+      "to": "clis",
+      "label": "运行时才报错"
+     },
+     {
+      "from": "describe",
+      "to": "user"
+     }
+    ]
+   },
+   "after": {
+    "caption": "写入前就按各家真实的模型列表核对；默认模型和核对状态一起显示；规划者与 dsh 的默认模型由同一个模块备份后写入。",
+    "nodes": [
+     {
+      "id": "user",
+      "label": "用户 / 规划者",
+      "kind": "caller",
+      "row": 0,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "planner-hosts"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "config",
+      "label": "config set / roles set",
+      "kind": "module",
+      "row": 1,
+      "column": 0,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "describe",
+      "label": "agents / models",
+      "kind": "module",
+      "row": 1,
+      "column": 1,
+      "modules": [
+       "executor-adapters",
+       "planner-surface"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "catalog",
+      "label": "模型目录：列表、核对、默认、写入",
+      "kind": "deep",
+      "row": 2,
+      "column": 1,
+      "span": 2,
+      "modules": [
+       "dispatch-policy",
+       "executor-adapters"
+      ],
+      "evidence": [],
+      "absorbs": [
+       "hostedit"
+      ]
+     },
+     {
+      "id": "select",
+      "label": "selectModel：dsh 比对默认",
+      "kind": "step",
+      "row": 2,
+      "column": 0,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "clis",
+      "label": "codex / claude / dsh",
+      "kind": "external",
+      "row": 4,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "executor-clis"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "hosts",
+      "label": "各家设置文件",
+      "kind": "external",
+      "row": 4,
+      "column": 2,
+      "modules": [
+       "planner-hosts"
+      ],
+      "evidence": []
+     }
+    ],
+    "edges": [
+     {
+      "from": "user",
+      "to": "config"
+     },
+     {
+      "from": "user",
+      "to": "describe"
+     },
+     {
+      "from": "config",
+      "to": "catalog",
+      "label": "写前核对"
+     },
+     {
+      "from": "describe",
+      "to": "catalog"
+     },
+     {
+      "from": "select",
+      "to": "catalog"
+     },
+     {
+      "from": "catalog",
+      "to": "clis",
+      "label": "取列表"
+     },
+     {
+      "from": "catalog",
+      "to": "hosts",
+      "label": "备份写入"
+     },
+     {
+      "from": "select",
+      "to": "clis"
+     }
+    ],
+    "seams": [
+     {
+      "label": "按 agent id 适配，不分规划与执行",
+      "below": "catalog"
+     }
+    ]
+   },
+   "findings": [
+    {
+     "id": "f-format-only",
+     "kind": "missing-seam",
+     "note": "只查格式",
+     "targets": [
+      "config",
+      "clis"
+     ],
+     "evidence": [
+      0,
+      5
+     ],
+     "confidence": "observed",
+     "detail": "MODEL_NAME 只限制字符和长度，config set 写入 executors.*.model 时直接接受；relay 与各家 CLI 之间没有一处去问“这个模型存在吗、支持这个推理强度吗”，所以写错只能在任务运行时由执行者报错。"
+    },
+    {
+     "id": "f-dsh-blanket",
+     "kind": "shallow",
+     "note": "dsh 一律拒绝",
+     "targets": [
+      "select"
+     ],
+     "evidence": [
+      1,
+      2
+     ],
+     "confidence": "observed",
+     "detail": "selectModel 只看执行者有没有 modelArgs 模板：dsh 没有，就拒绝任何模型。它不知道 dsh 当前默认用的是什么，于是“档位要求 dsh 用 X、而 dsh 恰好就在用 X”这种合理设置也写不进去。"
+    },
+    {
+     "id": "f-no-default",
+     "kind": "missing-seam",
+     "note": "看不到默认模型",
+     "targets": [
+      "describe",
+      "clis"
+     ],
+     "evidence": [
+      3
+     ],
+     "confidence": "observed",
+     "detail": "describeExecutors 只回显 relay 配置里的 model 和 effort；没配置时用户只看到空白，不知道 codex、claude、dsh 各自实际会用哪个模型。"
+    },
+    {
+     "id": "f-planner-hand",
+     "kind": "missing-seam",
+     "note": "规划者模型手改",
+     "targets": [
+      "user",
+      "hostedit"
+     ],
+     "evidence": [
+      4
+     ],
+     "confidence": "observed",
+     "detail": "relay-config skill 写明改不了规划者自己的模型；三家的模型分别在 TOML、JSON、YAML 里，键名各不相同，用户要逐家手改，改错也没有核对。"
+    }
+   ],
+   "callerKnowledge": {
+    "before": [
+     "各家有哪些模型",
+     "强度支持哪些",
+     "三家配置路径",
+     "dsh 只认默认",
+     "写错运行才知"
+    ],
+    "after": [
+     "models 列表",
+     "roles set"
+    ]
+   },
+   "solution": "新增按 agent id 适配的模型目录模块（models、hostconfig、yaml-lite）：从各家取模型列表和当前默认，供 config set、roles set、派发和显示共用核对，并负责带备份地写入各家的默认模型。",
+   "deletionTest": {
+    "verdict": "keep",
+    "text": "去掉模型目录，复杂度回到用户身上：逐家查模型名、手改三种格式的配置、等运行时报错；这是新增的必要复杂度，不是可删的中间层。"
+   },
+   "wins": [
+    {
+     "kind": "leverage",
+     "text": "写入前就发现写错的模型和推理强度"
+    },
+    {
+     "kind": "locality",
+     "text": "三家模型列表、默认值和配置写法集中在一处"
+    },
+    {
+     "kind": "testability",
+     "text": "用假 app-server、假 dump 和临时配置文件即可测"
+    }
+   ],
+   "verification": [
+    "config set 写入 codex 不存在的模型被拒，文件不变",
+    "dsh 默认与档位一致时派发成功，不一致时 model-mismatch",
+    "models set-default 写前留备份，--dry-run 不改任何文件",
+    "AGENTHUB_RELAY_ROLE=executor 时一切写入被拒"
+   ],
+   "boundaries": [
+    "现有 relay_* 工具的名称与参数",
+    "零运行时依赖",
+    "不写入任何密钥或环境变量的值",
+    "派发时不改任何 agent 的配置"
+   ],
+   "cost": "中到偏高：新增三个模块约 500 行与测试。风险在写别家的配置文件（必须只改目标键、写前备份、可预览），codex app-server 协议官方标为不稳定，dsh 只能读 YAML 子集。"
+  },
+  {
+   "id": "planner-designation",
+   "title": "规划者只能被识别，不能被指定",
+   "lede": "规划者身份由 --planner、环境变量或 MCP 客户端名识别出来，只用于选 profile 和写进任务记录；配置里没有“谁是规划者”，派发护栏也拿不到这个身份。",
+   "impact": "用户想固定由 Codex 规划、其他 agent 只执行时，没有地方能写下这个决定；换个会话误用 Claude Code 派发，relay 照样接受，路由也悄悄换成另一套 profile。",
+   "strength": "strong",
+   "dependency": "in-process",
+   "modules": [
+    "planner-surface",
+    "dispatch-policy",
+    "planner-hosts"
+   ],
+   "evidence": [
+    {
+     "path": "src/tools.mjs",
+     "lines": {
+      "start": 201,
+      "end": 204
+     },
+     "quote": "  /** Who is planning: the explicit id, AGENTHUB_RELAY_PLANNER, or the MCP client's name. */\n  function plannerId() {\n    return plannerFromName(planner ?? env.AGENTHUB_RELAY_PLANNER ?? clientName());\n  }",
+     "note": "身份只靠识别",
+     "symbol": "plannerId"
+    },
+    {
+     "path": "src/config.mjs",
+     "lines": {
+      "start": 303,
+      "end": 319
+     },
+     "quote": "  const id = PLANNER_IDS.includes(planner) ? planner : 'unknown';\n  let profile;\n  let profileReason;\n  if (env.AGENTHUB_RELAY_PROFILE) {\n    profile = env.AGENTHUB_RELAY_PROFILE;\n    profileReason = 'AGENTHUB_RELAY_PROFILE';\n  } else if (plannerProfiles[id]) {\n    profile = plannerProfiles[id];\n    profileReason = `plannerProfiles.${id} in the configuration file`;\n  } else if (fileProfile !== undefined) {\n    profile = fileProfile;\n    profileReason = 'profile in the configuration file';\n  } else if (DEFAULT_CONFIG.plannerProfiles[id]) {\n    profile = DEFAULT_CONFIG.plannerProfiles[id];\n    profileReason = `built-in default for a ${id} planner`;\n  } else {\n    profile = DEFAULT_CONFIG.profile;",
+     "note": "身份只用来选 profile",
+     "symbol": "buildConfig"
+    },
+    {
+     "path": "src/policy.mjs",
+     "lines": {
+      "start": 146,
+      "end": 150
+     },
+     "quote": "  if (role === 'executor') {\n    throw new PolicyError(\n      'executor-role',\n      'This process runs as an agenthub-relay executor (AGENTHUB_RELAY_ROLE=executor); executors may not dispatch further jobs.',\n    );",
+     "note": "护栏只认执行者角色",
+     "symbol": "planDispatch"
+    },
+    {
+     "path": "src/cli.mjs",
+     "lines": {
+      "start": 186,
+      "end": 188
+     },
+     "quote": "function plannerOf(values) {\n  return plannerFromName(values.planner ?? process.env.AGENTHUB_RELAY_PLANNER);\n}",
+     "note": "CLI 同样只识别",
+     "symbol": "plannerOf"
+    },
+    {
+     "path": "src/config.mjs",
+     "lines": {
+      "start": 62,
+      "end": 62
+     },
+     "quote": "const TOP_KEYS = ['profile', 'profiles', 'plannerProfiles', 'executors', 'checks', 'light'];",
+     "note": "配置里没有 planner 键",
+     "symbol": "TOP_KEYS"
+    }
+   ],
+   "before": {
+    "caption": "谁来派发都行：识别出的身份只决定用哪套路由，换了规划者也不会有任何提示。",
+    "nodes": [
+     {
+      "id": "callers",
+      "label": "任意 agent 会话",
+      "kind": "caller",
+      "row": 0,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "planner-hosts"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "identify",
+      "label": "plannerId：参数、环境、客户端名",
+      "kind": "step",
+      "row": 1,
+      "column": 0,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": [
+       0,
+       3
+      ]
+     },
+     {
+      "id": "profile",
+      "label": "按身份选 profile",
+      "kind": "step",
+      "row": 1,
+      "column": 1,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": [
+       1,
+       4
+      ]
+     },
+     {
+      "id": "guard",
+      "label": "planDispatch 护栏",
+      "kind": "module",
+      "row": 2,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": [
+       2
+      ]
+     },
+     {
+      "id": "clis",
+      "label": "执行者",
+      "kind": "external",
+      "row": 3,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "executor-clis"
+      ],
+      "evidence": []
+     }
+    ],
+    "edges": [
+     {
+      "from": "callers",
+      "to": "identify"
+     },
+     {
+      "from": "identify",
+      "to": "profile"
+     },
+     {
+      "from": "profile",
+      "to": "guard",
+      "label": "路由"
+     },
+     {
+      "from": "guard",
+      "to": "clis"
+     }
+    ]
+   },
+   "after": {
+    "caption": "配置里写明规划者：识别不出时按它处理，识别出的是别人时派发被拒；路由与模型由 roles set 一次写好。",
+    "nodes": [
+     {
+      "id": "callers",
+      "label": "任意 agent 会话",
+      "kind": "caller",
+      "row": 0,
+      "column": 0,
+      "modules": [
+       "planner-hosts"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "setting",
+      "label": "planner 设置（roles set）",
+      "kind": "step",
+      "row": 0,
+      "column": 1,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "identify",
+      "label": "plannerId：参数、环境、客户端名",
+      "kind": "step",
+      "row": 1,
+      "column": 0,
+      "modules": [
+       "planner-surface"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "profile",
+      "label": "按身份选 profile",
+      "kind": "step",
+      "row": 1,
+      "column": 1,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "guard",
+      "label": "planDispatch：角色与规划者护栏",
+      "kind": "module",
+      "row": 2,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "dispatch-policy"
+      ],
+      "evidence": []
+     },
+     {
+      "id": "clis",
+      "label": "执行者",
+      "kind": "external",
+      "row": 3,
+      "column": 0,
+      "span": 2,
+      "modules": [
+       "executor-clis"
+      ],
+      "evidence": []
+     }
+    ],
+    "edges": [
+     {
+      "from": "callers",
+      "to": "identify"
+     },
+     {
+      "from": "setting",
+      "to": "identify",
+      "label": "识别不出时"
+     },
+     {
+      "from": "identify",
+      "to": "profile"
+     },
+     {
+      "from": "identify",
+      "to": "guard",
+      "label": "识别出的身份"
+     },
+     {
+      "from": "setting",
+      "to": "guard",
+      "label": "指定的规划者"
+     },
+     {
+      "from": "profile",
+      "to": "guard",
+      "label": "路由"
+     },
+     {
+      "from": "guard",
+      "to": "clis"
+     }
+    ],
+    "seams": [
+     {
+      "label": "planner-mismatch 在策略层判定",
+      "below": "guard"
+     }
+    ]
+   },
+   "findings": [
+    {
+     "id": "f-identity-only",
+     "kind": "missing-seam",
+     "note": "没有指定入口",
+     "targets": [
+      "callers",
+      "identify"
+     ],
+     "evidence": [
+      0,
+      3,
+      4
+     ],
+     "confidence": "observed",
+     "detail": "MCP 与 CLI 两条入口都只做识别，配置的顶层键里没有 planner；用户无法声明“由谁规划”，只能在每次调用时传参或设环境变量。"
+    },
+    {
+     "id": "f-guard-blind",
+     "kind": "missing-seam",
+     "note": "身份不进护栏",
+     "targets": [
+      "identify",
+      "guard"
+     ],
+     "evidence": [
+      1,
+      2
+     ],
+     "confidence": "observed",
+     "detail": "识别出的身份只交给 buildConfig 选 profile，planDispatch 收不到它，护栏只认 AGENTHUB_RELAY_ROLE。把规划者校验放进 planDispatch，CLI 与 MCP 两条入口共用同一处判定，与执行者角色护栏并列。"
+    }
+   ],
+   "callerKnowledge": {
+    "before": [
+     "--planner 参数",
+     "客户端名规则",
+     "按规划者的路由",
+     "每次都要传"
+    ],
+    "after": [
+     "roles set"
+    ]
+   },
+   "solution": "配置新增 planner 键并由 roles set 写入；buildConfig 在识别不出时用它，planDispatch 收到识别身份与指定规划者，不符时以 planner-mismatch 拒绝。",
+   "deletionTest": {
+    "verdict": "keep",
+    "text": "没有这个设置，“由谁规划”只能靠每次调用时的参数维持，误用另一个会话派发不会被发现；校验必须放在派发策略里才对两条入口都生效。"
+   },
+   "wins": [
+    {
+     "kind": "locality",
+     "text": "规划者校验与执行者角色护栏放在同一处"
+    },
+    {
+     "kind": "leverage",
+     "text": "一条 roles set 写好规划者、三档执行者和模型"
+    }
+   ],
+   "verification": [
+    "planner 设为 codex 时，claude 身份派发返回 planner-mismatch",
+    "识别不出身份时按 codex 处理并在任务记录里标 assumed",
+    "未设置 planner 时现有派发行为不变"
+   ],
+   "boundaries": [
+    "身份识别的现有顺序",
+    "plannerProfiles 与 profile 的优先级",
+    "relay_wait、apply 等非派发工具"
+   ],
+   "cost": "小：config 新增一个键，planDispatch 多一个参数和一条护栏，tools 与 CLI 传入识别身份；主要风险是已有用户设置后忘记，所以错误信息要写明如何修改。"
+  }
+ ]
+}
