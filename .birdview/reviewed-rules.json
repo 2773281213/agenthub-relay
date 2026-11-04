@@ -1,10 +1,10 @@
 {
- "revision": "b71e8ded3e978f27b395f35ebcc5598b85790ce4",
+ "revision": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
  "scope": "已审阅 AGENTS.md 全部 14 条规则、CLAUDE.md，以及四个 skill 中只在规划者派发、查看任务或修改设置时适用的 7 条条件规则；docs/design.md 是设计说明，不单独提炼规则。收集器报告的唯一未解析引用是 docs/design.md 第 12 节提到的 final.md：它是任务目录 .agenthub/jobs/<id>/ 里的运行时文件，不是文档，不影响规则审阅。",
  "architectureBinding": {
   "mapId": "agenthub-relay-system",
   "mapRevision": 9,
-  "sourceRevision": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
+  "sourceRevision": "c85f7e41d30077006fa42f5ee0611ba58a0b3658"
  },
  "groups": [
   {
