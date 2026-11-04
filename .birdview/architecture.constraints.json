@@ -2,10 +2,10 @@
   "schema": "birdview.constraint-catalog/v1",
   "project": {
     "name": "agenthub-relay",
-    "revision": "c85f7e41d30077006fa42f5ee0611ba58a0b3658"
+    "revision": "055d0525aa85b02edfe79feed07761575eb5dbd0"
   },
   "coverage": {
-    "checkedAt": "2026-11-04T01:20:03.580Z",
+    "checkedAt": "2026-11-04T01:23:02.945Z",
     "snapshot": "committed-HEAD",
     "shallow": false,
     "entries": [
@@ -144,7 +144,7 @@
       "scope": null,
       "discoveredFrom": null,
       "applicability": "unreviewed",
-      "text": "---\nname: agenthub-relay\ndescription: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) with the bundled relay script or the relay_* MCP tools - confirm with the user which agent and model takes each tier for this planner session, split the work, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.\nwhen_to_use: Use when the user wants work handed to another agent, for example \"let Codex do this\", \"give the simple edits to DeepSeek\", \"have Claude Code take the hard part\", \"run these in parallel\", \"交给 codex 做\", \"让 dsh 改这几个文件\", \"派给别的 agent\", \"并行做\", \"简单的部分用便宜的模型\"; when a large task splits into independent pieces that another agent can do in parallel or more cheaply; or when the user asks which agent and model take each tier in this planner session, or wants to change them (\"看分工\", \"换执行者\", \"换模型\"). Not for architecture reviews, skill audits, or work you cannot state as a self-contained task.\n---\n\n# agenthub-relay: delegating to other agents\n\nYou are the planner. Executors run in their own git worktrees; your working tree changes only when you apply a job. This works the same whichever agent plans: Claude Code, Codex, DeepSeek Harness or Antigravity.\n\nDo not delegate when you are yourself an executor (`AGENTHUB_RELAY_ROLE=executor`; dispatch refuses), when you cannot state the task precisely, or when explaining it costs more than doing it.\n\n## How to call the relay\n\nRun the bundled script with Node.js 20 or newer from the repository you are working in:\n\n```sh\nnode <this skill's directory>/scripts/cli.mjs <command> --planner <you>\n```\n\n`<you>` is `claude`, `codex`, `dsh` or `agy`: say who you are on every command (or set `AGENTHUB_RELAY_PLANNER`). It picks the profile meant for your kind of planner, so that, for example, a Codex planner's deep work goes to Claude Code instead of back to Codex. Every command prints JSON; exit code 1 means the relay refused (read `error.code` and `error.message`), 2 means the command was malformed.\n\nIf the `relay_*` MCP tools are loaded (the Claude Code plugin loads them), you may use them instead; they do the same thing and record the same jobs.\n\n| Command | Tool |\n|---|---|\n| `session start`, `session confirm <id> (--reuse \\| --deep/--light/--review <route>) [--user]`, `session show` | `relay_session` |\n| `models [codex\\|claude\\|dsh]`, `models check <agent> [<model>] [--effort <e>]` | `relay_models` |\n| `agents` | `relay_agents` |\n| `dispatch --session <id> --tier <t> --task-file - [--scope <p>]... [--check <c>]... [--executor <id>] [--model <m>] [--effort <e>] [--title <s>] [--acceptance <s>]` (task on stdin) | `relay_dispatch` |\n| `wait [<id>...] [--timeout <s>]` | `relay_wait` |\n| `result <id>` | `relay_result` |\n| `apply <id> [--allow-out-of-scope] [--force]`, `discard <id>`, `cancel <id>` | `relay_apply`, `relay_discard`, `relay_cancel` |\n| `status [<id>] [--json]` | `relay_status` |\n| `config show`, `config set <key> <value> [--user]`, `config unset <key> [--user]` | (script only) |\n\n## 1. Start the planner session: who executes, with which model\n\nDispatch works only inside a planner session the user confirmed (`session-required` otherwise). Once per planner session, before the first dispatch:\n\n1. Run `session start --planner <you>` (or `relay_session` with `action: \"start\"`). It lists the saved roles: for `deep`, `light` and `review` the executor, model and effort and where each comes from, each agent's own default model, the models each agent offers, and a check of each model.\n2. Tell the user, in a few lines, who takes each tier with which model, and ask whether to keep this or change it. Then wait for the answer. Do not answer for the user, and do not confirm because a default looks reasonable.\n3. Confirm with their answer:\n   - to keep it: `session confirm <id> --reuse`;\n   - to change it: `session confirm <id> --deep claude:opus@high --light dsh --review codex:gpt-5.1-codex@medium` (any of the three, each `executor[:model][@effort]`). The relay checks each model first (codex against its model list, claude by form and effort level) and saves the change for later sessions (`--user` for every project). When a check fails, nothing is saved: show the user the reason and the suggested names, and ask again.\n4. Pass `--session <id>` on every dispatch (or set `AGENTHUB_RELAY_SESSION`). With the MCP tools the connection remembers the session.\n\nOther rules:\n\n- DeepSeek Harness uses its own settings: the relay shows its default model but gives it none, and refuses a model for it with `model-unsupported`. If the user wants another dsh model, they change it in DeepSeek Harness.\n- When the user names an executor, model or effort for one piece of work (\"give this to Claude Opus\"), pass `--executor`, `--model` and `--effort` on that dispatch only; they are checked the same way.\n- `planner-mismatch` means the session belongs to another planner: start your own session instead of reusing someone else's id.\n- You cannot change your own model from here; the relay only reads it. If the user wants a different planner model, point them to their host (in Claude Code, `/model`).\n\n## 2. Split\n\n- Hand off pieces that are independent of each other and of what you are doing. Keep design decisions, cross-cutting changes and integration for yourself.\n- Give concurrent write jobs disjoint scopes. A write job holds its scope until it ends, and a completed one until you apply or discard it; an overlapping dispatch is refused.\n\n## 3. Pick a tier\n\n| Tier | For | Required | Default executor (`thread16` / `codex-planner`) |\n|---|---|---|---|\n| `deep` | complex or multi-file work that needs reasoning | `scope` (`\".\"` for the whole repository) | `codex` / `claude` |\n| `light` | simple, clearly specified, mechanical work | 1-10 `scope` paths and at least one check | `dsh` (DeepSeek V4 Flash) |\n| `review` | read-only investigation or a second opinion | nothing; any change is reported out of scope | `claude` / `codex` |\n\n`agents` shows the active profile, why it was chosen, and which executors are installed.\n\n## 4. Write the task\n\nThe executor sees only your task and the repository at the base commit (tracked changes included; untracked files are not, and dispatch warns about them). Write it so a capable engineer new to the code could finish it:\n\n- the goal and why, in a sentence or two;\n- the files, symbols and conventions that matter;\n- constraints: what must not change, interfaces to keep;\n- `acceptance`: what done looks like;\n- `checks`: shell commands that exit 0 only when the work is right. They run in the job's worktree after the executor finishes; prefer focused tests to a slow full suite.\n\nPass the task on stdin (`--task-file -`) to avoid shell quoting. Never put secrets in a task. Executors receive credentials only by variable name (`passEnv` in `.agenthub/config.json`, edited by hand).\n\n## 5. Wait\n\n- With the relay_* MCP tools in Claude Code: if the dispatch result says `watcher.active: true`, end your turn; the Claude Code mod wakes you when a job ends and keeps your prompt cache warm meanwhile.\n- Otherwise run `wait` (50 seconds by default; `--timeout` up to 3600 if your shell allows long commands), doing other useful work between calls, until a job finishes.\n\n## 6. Review and integrate\n\n1. `result <id>`: summary, model, checks, changed files, out-of-scope files, patch stat and log paths. Read the patch (`logs.patch`) for anything that is not trivial.\n2. If it is right, `apply <id>`. The changes land unstaged in your working tree; review and commit them as your own. Out-of-scope changes need `--allow-out-of-scope`, and only after you have read them; a failed or cancelled job needs `--force`.\n3. Otherwise `discard <id>`, then improve the task or move it up a tier and dispatch again.\n4. `cancel <id>` stops a job you no longer need.\n\nA completed job is not proof: \"checks passed\" covers only what the checks test, and a job without checks is unverified.\n\n## With Birdview\n\nWhen Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation. `session start` only reads; a `session confirm` that saves changed roles writes the relay's settings file, so while Birdview's plan is unconfirmed confirm with `--reuse`, or save the change with `--user` and say that this does not approve the plan.",
+      "text": "---\nname: agenthub-relay\ndescription: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) with the bundled relay script or the relay_* MCP tools - confirm with the user which agent and model takes each tier for this planner session, split the work, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.\nwhen_to_use: Use when the user wants coding work delegated, split or run in parallel across agents, or names an agent or model for part of it, for example \"let Codex implement this\", \"give the mechanical edits to DeepSeek\", \"have Claude Code take the hard part\", \"split this up and run it in parallel\", \"get a second opinion from Codex on this diff\", \"use opus for the deep tier\", \"交给 codex 做\", \"让 dsh 改这几个文件\", \"分给几个 agent 并行做\", \"简单的部分用便宜的模型\", \"让 Claude Code 复核一下\", \"这次谁来执行、用什么模型\". Also use it when a large task has independent, well-specified pieces another agent can do in parallel or more cheaply, when the user mentions agenthub-relay or relay jobs, and to check, apply or discard jobs already dispatched. Not for architecture reviews (birdview-review), skill audits (birdview-compatibility), edits faster to make yourself, work that still needs back-and-forth design, or when you run as an agenthub-relay executor.\n---\n\n# agenthub-relay: delegating to other agents\n\nYou are the planner. Executors run in their own git worktrees; your working tree changes only when you apply a job. This works the same whichever agent plans: Claude Code, Codex, DeepSeek Harness or Antigravity.\n\nDo not delegate when you are yourself an executor (`AGENTHUB_RELAY_ROLE=executor`; dispatch refuses), when you cannot state the task precisely, or when explaining it costs more than doing it.\n\n## How to call the relay\n\nRun the bundled script with Node.js 20 or newer from the repository you are working in:\n\n```sh\nnode <this skill's directory>/scripts/cli.mjs <command> --planner <you>\n```\n\n`<you>` is `claude`, `codex`, `dsh` or `agy`: say who you are on every command (or set `AGENTHUB_RELAY_PLANNER`). It picks the profile meant for your kind of planner, so that, for example, a Codex planner's deep work goes to Claude Code instead of back to Codex. Every command prints JSON; exit code 1 means the relay refused (read `error.code` and `error.message`), 2 means the command was malformed.\n\nIf the `relay_*` MCP tools are loaded (the Claude Code plugin loads them), you may use them instead; they do the same thing and record the same jobs.\n\n| Command | Tool |\n|---|---|\n| `session start`, `session confirm <id> (--reuse \\| --deep/--light/--review <route>) [--user]`, `session show` | `relay_session` |\n| `models [codex\\|claude\\|dsh]`, `models check <agent> [<model>] [--effort <e>]` | `relay_models` |\n| `agents` | `relay_agents` |\n| `dispatch --session <id> --tier <t> --task-file - [--scope <p>]... [--check <c>]... [--executor <id>] [--model <m>] [--effort <e>] [--title <s>] [--acceptance <s>]` (task on stdin) | `relay_dispatch` |\n| `wait [<id>...] [--timeout <s>]` | `relay_wait` |\n| `result <id>` | `relay_result` |\n| `apply <id> [--allow-out-of-scope] [--force]`, `discard <id>`, `cancel <id>` | `relay_apply`, `relay_discard`, `relay_cancel` |\n| `status [<id>] [--json]` | `relay_status` |\n| `config show`, `config set <key> <value> [--user]`, `config unset <key> [--user]` | (script only) |\n\n## 1. Start the planner session: who executes, with which model\n\nDispatch works only inside a planner session the user confirmed (`session-required` otherwise). Once per planner session, before the first dispatch:\n\n1. Run `session start --planner <you>` (or `relay_session` with `action: \"start\"`). It lists the saved roles: for `deep`, `light` and `review` the executor, model and effort and where each comes from, each agent's own default model, the models each agent offers, and a check of each model.\n2. Tell the user, in a few lines, who takes each tier with which model, and ask whether to keep this or change it. Then wait for the answer. Do not answer for the user, and do not confirm because a default looks reasonable.\n3. Confirm with their answer:\n   - to keep it: `session confirm <id> --reuse`;\n   - to change it: `session confirm <id> --deep claude:opus@high --light dsh --review codex:gpt-5.1-codex@medium` (any of the three, each `executor[:model][@effort]`). The relay checks each model first (codex against its model list, claude by form and effort level) and saves the change for later sessions (`--user` for every project). When a check fails, nothing is saved: show the user the reason and the suggested names, and ask again.\n4. Pass `--session <id>` on every dispatch (or set `AGENTHUB_RELAY_SESSION`). With the MCP tools the connection remembers the session.\n\nOther rules:\n\n- DeepSeek Harness uses its own settings: the relay shows its default model but gives it none, and refuses a model for it with `model-unsupported`. If the user wants another dsh model, they change it in DeepSeek Harness.\n- When the user names an executor, model or effort for one piece of work (\"give this to Claude Opus\"), pass `--executor`, `--model` and `--effort` on that dispatch only; they are checked the same way.\n- `planner-mismatch` means the session belongs to another planner: start your own session instead of reusing someone else's id.\n- You cannot change your own model from here; the relay only reads it. If the user wants a different planner model, point them to their host (in Claude Code, `/model`).\n\n## 2. Split\n\n- Hand off pieces that are independent of each other and of what you are doing. Keep design decisions, cross-cutting changes and integration for yourself.\n- Give concurrent write jobs disjoint scopes. A write job holds its scope until it ends, and a completed one until you apply or discard it; an overlapping dispatch is refused.\n\n## 3. Pick a tier\n\n| Tier | For | Required | Default executor (`thread16` / `codex-planner`) |\n|---|---|---|---|\n| `deep` | complex or multi-file work that needs reasoning | `scope` (`\".\"` for the whole repository) | `codex` / `claude` |\n| `light` | simple, clearly specified, mechanical work | 1-10 `scope` paths and at least one check | `dsh` (DeepSeek V4 Flash) |\n| `review` | read-only investigation or a second opinion | nothing; any change is reported out of scope | `claude` / `codex` |\n\n`agents` shows the active profile, why it was chosen, and which executors are installed.\n\n## 4. Write the task\n\nThe executor sees only your task and the repository at the base commit (tracked changes included; untracked files are not, and dispatch warns about them). Write it so a capable engineer new to the code could finish it:\n\n- the goal and why, in a sentence or two;\n- the files, symbols and conventions that matter;\n- constraints: what must not change, interfaces to keep;\n- `acceptance`: what done looks like;\n- `checks`: shell commands that exit 0 only when the work is right. They run in the job's worktree after the executor finishes; prefer focused tests to a slow full suite.\n\nPass the task on stdin (`--task-file -`) to avoid shell quoting. Never put secrets in a task. Executors receive credentials only by variable name (`passEnv` in `.agenthub/config.json`, edited by hand).\n\n## 5. Wait\n\n- With the relay_* MCP tools in Claude Code: if the dispatch result says `watcher.active: true`, end your turn; the Claude Code mod wakes you when a job ends and keeps your prompt cache warm meanwhile.\n- Otherwise run `wait` (50 seconds by default; `--timeout` up to 3600 if your shell allows long commands), doing other useful work between calls, until a job finishes.\n\n## 6. Review and integrate\n\n1. `result <id>`: summary, model, checks, changed files, out-of-scope files, patch stat and log paths. Read the patch (`logs.patch`) for anything that is not trivial.\n2. If it is right, `apply <id>`. The changes land unstaged in your working tree; review and commit them as your own. Out-of-scope changes need `--allow-out-of-scope`, and only after you have read them; a failed or cancelled job needs `--force`.\n3. Otherwise `discard <id>`, then improve the task or move it up a tier and dispatch again.\n4. `cancel <id>` stops a job you no longer need.\n\nA completed job is not proof: \"checks passed\" covers only what the checks test, and a job without checks is unverified.\n\n## With Birdview\n\nWhen Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation. `session start` only reads; a `session confirm` that saves changed roles writes the relay's settings file, so while Birdview's plan is unconfirmed confirm with `--reuse`, or save the change with `--user` and say that this does not approve the plan.",
       "sections": [
         {
           "id": "source-7bb41a60ccd5329c-s1",
@@ -221,9 +221,9 @@
       ],
       "history": {
         "complete": true,
-        "version": 4,
-        "lastEdited": "2026-11-04T09:19:40+08:00",
-        "commit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
+        "version": 5,
+        "lastEdited": "2026-11-04T09:23:02+08:00",
+        "commit": "055d0525aa85b02edfe79feed07761575eb5dbd0"
       }
     },
     {
@@ -458,7 +458,7 @@
   "architectureBinding": {
     "mapId": "agenthub-relay-system",
     "mapRevision": 9,
-    "sourceRevision": "c85f7e41d30077006fa42f5ee0611ba58a0b3658"
+    "sourceRevision": "055d0525aa85b02edfe79feed07761575eb5dbd0"
   },
   "rules": [
     {
@@ -481,7 +481,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 7,
         "endLine": 7,
@@ -519,7 +519,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 9,
         "endLine": 9,
@@ -565,7 +565,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 8,
         "endLine": 8,
@@ -602,7 +602,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 10,
         "endLine": 10,
@@ -644,7 +644,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 14,
         "endLine": 14,
@@ -682,7 +682,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 16,
         "endLine": 16,
@@ -721,7 +721,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 17,
         "endLine": 17,
@@ -763,7 +763,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 19,
         "endLine": 19,
@@ -800,7 +800,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 20,
         "endLine": 20,
@@ -837,7 +837,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 15,
         "endLine": 15,
@@ -871,7 +871,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 18,
         "endLine": 18,
@@ -906,7 +906,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 24,
         "endLine": 24,
@@ -938,7 +938,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 25,
         "endLine": 25,
@@ -975,7 +975,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "AGENTS.md",
         "line": 29,
         "endLine": 29,
@@ -1012,7 +1012,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "skills/agenthub-relay/SKILL.md",
         "line": 80,
         "endLine": 80,
@@ -1052,7 +1052,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "skills/agenthub-relay/SKILL.md",
         "line": 84,
         "endLine": 84,
@@ -1091,7 +1091,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "skills/agenthub-relay/SKILL.md",
         "line": 94,
         "endLine": 94,
@@ -1126,7 +1126,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "skills/agenthub-relay/SKILL.md",
         "line": 98,
         "endLine": 98,
@@ -1169,7 +1169,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "skills/agenthub-relay/SKILL.md",
         "line": 42,
         "endLine": 42,
@@ -1212,7 +1212,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "skills/relay-status/SKILL.md",
         "line": 15,
         "endLine": 15,
@@ -1247,7 +1247,7 @@
       "history": {
         "status": "tracked",
         "method": "git-line-history",
-        "snapshot": "c85f7e41d30077006fa42f5ee0611ba58a0b3658",
+        "snapshot": "055d0525aa85b02edfe79feed07761575eb5dbd0",
         "sourcePath": "skills/relay-config/SKILL.md",
         "line": 12,
         "endLine": 12,
@@ -1274,7 +1274,7 @@
       "skills/relay-status/SKILL.md",
       "skills/relay-config/SKILL.md"
     ],
-    "reviewedAt": "2026-11-04T01:20:04.026Z",
+    "reviewedAt": "2026-11-04T01:23:03.449Z",
     "implementationVerification": "unverified"
   }
 }
