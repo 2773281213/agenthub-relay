@@ -1,10 +1,10 @@
 # 技能兼容性体检
 
-扫描时间: 2026-11-04T01:18:54.543Z
+扫描时间: 2026-11-04T01:22:21.380Z
 
 ## 兼容性结论：已提供评估
 
-评估对象是 v0.3 的 skill（新增规划者会话：每个会话先列出已保存的分工与模型并等待用户确认）：agenthub-relay（自带脚本，MCP 可选）与三个只能显式调用的入口 relay-review、relay-status、relay-config，和 birdview 三件套一起放在共享目录 .agents/skills 里体检。没有重名，没有元数据问题。relay 系列与 birdview、birdview-review 需要排序：先确认计划或评审方案，再派发、再 apply；上一轮发现的 relay-status 缺少 Birdview 规则已补上。relay-review 与 birdview-review 在只显式调用、不做架构评审的前提下兼容；relay-config 改为会话流程，只写 relay 自己的设置文件，且先问用户、等待答复再确认；会保存修改的确认在 Birdview 计划确认前只用 --reuse 或 --user。主 skill 新增 when\_to\_use（中英文请求示例，如“交给 codex 做”“并行做”“换模型”），只扩大它自己的派发与分工场景，并写明不用于架构评审和 skill 体检，不与 birdview、birdview-review、birdview-compatibility 抢触发。安装时只装一份（共享目录），否则同时读 ~/.dsh/skills 与 ~/.agents/skills 的宿主会看到重名。宿主对 disable-model-invocation 的支持只确认了 Claude Code。
+评估对象是 v0.3 的 skill（新增规划者会话：每个会话先列出已保存的分工与模型并等待用户确认）：agenthub-relay（自带脚本，MCP 可选）与三个只能显式调用的入口 relay-review、relay-status、relay-config，和 birdview 三件套一起放在共享目录 .agents/skills 里体检。没有重名，没有元数据问题。relay 系列与 birdview、birdview-review 需要排序：先确认计划或评审方案，再派发、再 apply；上一轮发现的 relay-status 缺少 Birdview 规则已补上。relay-review 与 birdview-review 在只显式调用、不做架构评审的前提下兼容；relay-config 改为会话流程，只写 relay 自己的设置文件，且先问用户、等待答复再确认；会保存修改的确认在 Birdview 计划确认前只用 --reuse 或 --user。主 skill 新增 when\_to\_use（中英文请求示例，如“交给 codex 做”“分给几个 agent 并行做”“这次谁来执行、用什么模型”），只覆盖它自己的派发、分工与已派发任务的处理，并点名把架构评审留给 birdview-review、把 skill 体检留给 birdview-compatibility，不与 Birdview 的三个 skill 抢触发；“让 Claude Code 复核一下”这类代码复核请求由主 skill 的 review 档处理，relay-review 仍只在显式调用时运行。安装时只装一份（共享目录），否则同时读 ~/.dsh/skills 与 ~/.agents/skills 的宿主会看到重名。宿主对 disable-model-invocation 的支持只确认了 Claude Code。
 
 发现技能 / 引用正文的文件 / 评估关系: 7 / 7 / 10
 
@@ -12,7 +12,7 @@
 
 ## 需要关注的关系
 
-评估者 / 评估时间: agent / 2026-11-04T01:18:54.000Z
+评估者 / 评估时间: agent / 2026-11-04T01:22:21.000Z
 
 ### birdview / agenthub-relay: 需要排序
 

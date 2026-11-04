@@ -73,7 +73,7 @@ test('each skill is named after its folder; the thin entries are explicit-only a
       assert.equal(typeof parsed.when_to_use, 'string', 'when_to_use is one plain string');
       assert.ok(parsed.description.length + parsed.when_to_use.length <= 1536, 'description and when_to_use fit the listing');
       assert.match(parsed.when_to_use, /交给 codex 做/, 'Chinese requests trigger it too');
-      assert.match(parsed.when_to_use, /Not for architecture reviews, skill audits/);
+      assert.match(parsed.when_to_use, /Not for architecture reviews \(birdview-review\), skill audits \(birdview-compatibility\)/, 'it leaves the Birdview skills their own requests');
       continue;
     }
     assert.equal(fields['disable-model-invocation'], 'true', `${name} runs only when invoked`);
