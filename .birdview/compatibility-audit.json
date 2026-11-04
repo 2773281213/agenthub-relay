@@ -1,6 +1,6 @@
 {
   "schemaVersion": "2",
-  "generatedAt": "2026-11-03T15:57:04.222Z",
+  "generatedAt": "2026-11-04T01:18:54.543Z",
   "roots": [
     ".agents/skills"
   ],
@@ -10,7 +10,7 @@
       "path": ".agents/skills/agenthub-relay/SKILL.md",
       "root": ".agents/skills",
       "description": "Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) with the bundled relay script or the relay_* MCP tools - confirm with the user which agent and model takes each tier for this planner session, split the work, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.",
-      "digest": "11aa64827b253464d9d9b5e91e04f072ef44455a7482dbd4d08ecdb934e3c163",
+      "digest": "9376d574d9084894b5a7ef19f96c0465383c54f7e13252a282e0a4f19a31054d",
       "issues": []
     },
     {
@@ -65,10 +65,10 @@
   "duplicateNames": [],
   "assessment": {
     "status": "reviewed",
-    "reviewedAt": "2026-11-03T15:57:04.000Z",
+    "reviewedAt": "2026-11-04T01:18:54.000Z",
     "reviewer": "agent",
     "language": "zh",
-    "summary": "评估对象是 v0.3 的 skill（新增规划者会话：每个会话先列出已保存的分工与模型并等待用户确认）：agenthub-relay（自带脚本，MCP 可选）与三个只能显式调用的入口 relay-review、relay-status、relay-config，和 birdview 三件套一起放在共享目录 .agents/skills 里体检。没有重名，没有元数据问题。relay 系列与 birdview、birdview-review 需要排序：先确认计划或评审方案，再派发、再 apply；上一轮发现的 relay-status 缺少 Birdview 规则已补上。relay-review 与 birdview-review 在只显式调用、不做架构评审的前提下兼容；relay-config 改为会话流程，只写 relay 自己的设置文件，且先问用户、等待答复再确认；会保存修改的确认在 Birdview 计划确认前只用 --reuse 或 --user。安装时只装一份（共享目录），否则同时读 ~/.dsh/skills 与 ~/.agents/skills 的宿主会看到重名。宿主对 disable-model-invocation 的支持只确认了 Claude Code。",
+    "summary": "评估对象是 v0.3 的 skill（新增规划者会话：每个会话先列出已保存的分工与模型并等待用户确认）：agenthub-relay（自带脚本，MCP 可选）与三个只能显式调用的入口 relay-review、relay-status、relay-config，和 birdview 三件套一起放在共享目录 .agents/skills 里体检。没有重名，没有元数据问题。relay 系列与 birdview、birdview-review 需要排序：先确认计划或评审方案，再派发、再 apply；上一轮发现的 relay-status 缺少 Birdview 规则已补上。relay-review 与 birdview-review 在只显式调用、不做架构评审的前提下兼容；relay-config 改为会话流程，只写 relay 自己的设置文件，且先问用户、等待答复再确认；会保存修改的确认在 Birdview 计划确认前只用 --reuse 或 --user。主 skill 新增 when_to_use（中英文请求示例，如“交给 codex 做”“并行做”“换模型”），只扩大它自己的派发与分工场景，并写明不用于架构评审和 skill 体检，不与 birdview、birdview-review、birdview-compatibility 抢触发。安装时只装一份（共享目录），否则同时读 ~/.dsh/skills 与 ~/.agents/skills 的宿主会看到重名。宿主对 disable-model-invocation 的支持只确认了 Claude Code。",
     "conclusions": [
       {
         "leftSkill": "birdview",
@@ -88,13 +88,13 @@
           {
             "skill": "agenthub-relay",
             "path": ".agents/skills/agenthub-relay/SKILL.md",
-            "digest": "11aa64827b253464d9d9b5e91e04f072ef44455a7482dbd4d08ecdb934e3c163",
+            "digest": "9376d574d9084894b5a7ef19f96c0465383c54f7e13252a282e0a4f19a31054d",
             "quote": "When Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation."
           },
           {
             "skill": "agenthub-relay",
             "path": ".agents/skills/agenthub-relay/SKILL.md",
-            "digest": "11aa64827b253464d9d9b5e91e04f072ef44455a7482dbd4d08ecdb934e3c163",
+            "digest": "9376d574d9084894b5a7ef19f96c0465383c54f7e13252a282e0a4f19a31054d",
             "quote": "`session start` only reads; a `session confirm` that saves changed roles writes the relay's settings file, so while Birdview's plan is unconfirmed confirm with `--reuse`, or save the change with `--user` and say that this does not approve the plan."
           }
         ],
@@ -118,7 +118,7 @@
           {
             "skill": "agenthub-relay",
             "path": ".agents/skills/agenthub-relay/SKILL.md",
-            "digest": "11aa64827b253464d9d9b5e91e04f072ef44455a7482dbd4d08ecdb934e3c163",
+            "digest": "9376d574d9084894b5a7ef19f96c0465383c54f7e13252a282e0a4f19a31054d",
             "quote": "When Birdview is active for the task, confirm Birdview's displayed plan, or the birdview-review proposal being implemented, before dispatching any job that changes files; dispatched jobs are part of that plan's scope and are recorded as its activity. Read-only `review` jobs may run before confirmation."
           }
         ],
@@ -166,7 +166,7 @@
           {
             "skill": "agenthub-relay",
             "path": ".agents/skills/agenthub-relay/SKILL.md",
-            "digest": "11aa64827b253464d9d9b5e91e04f072ef44455a7482dbd4d08ecdb934e3c163",
+            "digest": "9376d574d9084894b5a7ef19f96c0465383c54f7e13252a282e0a4f19a31054d",
             "quote": "Read-only `review` jobs may run before confirmation."
           }
         ],
@@ -208,7 +208,7 @@
           {
             "skill": "agenthub-relay",
             "path": ".agents/skills/agenthub-relay/SKILL.md",
-            "digest": "11aa64827b253464d9d9b5e91e04f072ef44455a7482dbd4d08ecdb934e3c163",
+            "digest": "9376d574d9084894b5a7ef19f96c0465383c54f7e13252a282e0a4f19a31054d",
             "quote": "Executors run in their own git worktrees; your working tree changes only when you apply a job."
           },
           {
@@ -256,7 +256,7 @@
           {
             "skill": "agenthub-relay",
             "path": ".agents/skills/agenthub-relay/SKILL.md",
-            "digest": "11aa64827b253464d9d9b5e91e04f072ef44455a7482dbd4d08ecdb934e3c163",
+            "digest": "9376d574d9084894b5a7ef19f96c0465383c54f7e13252a282e0a4f19a31054d",
             "quote": "ask whether to keep this or change it. Then wait for the answer. Do not answer for the user, and do not confirm because a default looks reasonable."
           },
           {

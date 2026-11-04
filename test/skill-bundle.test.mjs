@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 
+import { parseYaml } from '../src/yaml-lite.mjs';
 import { fakeTask, makeRepo, ROOT, useFakeExecutors } from './helpers.mjs';
 
 const SKILLS = path.join(ROOT, 'skills');
@@ -67,6 +68,12 @@ test('each skill is named after its folder; the thin entries are explicit-only a
     assert.ok(fields.description.length > 40 && fields.description.length <= 1024, `${name} has a usable description`);
     if (name === 'agenthub-relay') {
       assert.equal(fields['disable-model-invocation'], undefined, 'the main skill may be chosen by the model');
+      // Claude Code appends when_to_use to the description and cuts the pair at 1,536 characters.
+      const parsed = parseYaml(/^---\n([\s\S]*?)\n---\n/.exec(fs.readFileSync(path.join(SKILLS, name, 'SKILL.md'), 'utf8'))[1]);
+      assert.equal(typeof parsed.when_to_use, 'string', 'when_to_use is one plain string');
+      assert.ok(parsed.description.length + parsed.when_to_use.length <= 1536, 'description and when_to_use fit the listing');
+      assert.match(parsed.when_to_use, /交给 codex 做/, 'Chinese requests trigger it too');
+      assert.match(parsed.when_to_use, /Not for architecture reviews, skill audits/);
       continue;
     }
     assert.equal(fields['disable-model-invocation'], 'true', `${name} runs only when invoked`);

@@ -12,6 +12,8 @@ npx skills add 2773281213/agenthub-relay --skill agenthub-relay
 
 or copy the whole `skills/agenthub-relay` folder (with its `scripts/`) to where your planner reads skills. Install one copy only: a planner that reads two of these folders would see two skills with the same name.
 
+The skill's `description` says what it does and when to use it, so every host can read it. Its `when_to_use` adds example requests in English and Chinese ("let Codex do this", "交给 codex 做"); Claude Code appends it to the description, and hosts that do not know the field are expected to ignore it. Uploads to claude.ai and the Skills API accept only `name`, `description`, `license`, `compatibility`, `metadata` and `allowed-tools`, so remove `when_to_use` (and `disable-model-invocation` from the thin entries) before uploading there.
+
 | Planner | User skills | Project skills |
 |---|---|---|
 | Claude Code | `~/.claude/skills` (or the plugin, below) | `.claude/skills` |

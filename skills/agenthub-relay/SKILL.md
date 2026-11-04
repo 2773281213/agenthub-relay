@@ -1,6 +1,7 @@
 ---
 name: agenthub-relay
 description: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) with the bundled relay script or the relay_* MCP tools - confirm with the user which agent and model takes each tier for this planner session, split the work, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.
+when_to_use: Use when the user wants work handed to another agent, for example "let Codex do this", "give the simple edits to DeepSeek", "have Claude Code take the hard part", "run these in parallel", "交给 codex 做", "让 dsh 改这几个文件", "派给别的 agent", "并行做", "简单的部分用便宜的模型"; when a large task splits into independent pieces that another agent can do in parallel or more cheaply; or when the user asks which agent and model take each tier in this planner session, or wants to change them ("看分工", "换执行者", "换模型"). Not for architecture reviews, skill audits, or work you cannot state as a self-contained task.
 ---
 
 # agenthub-relay: delegating to other agents
