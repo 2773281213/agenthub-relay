@@ -2,11 +2,11 @@
  "schemaVersion": 1,
  "language": "zh",
  "mapId": "agenthub-relay-system",
- "revision": 8,
+ "revision": 9,
  "project": {
   "id": "agenthub-relay",
   "name": "agenthub-relay",
-  "revision": "8696a7011e3d0230417c91b208793eed65dcb6f9",
+  "revision": "b71e8ded3e978f27b395f35ebcc5598b85790ce4",
   "translations": {
    "en": {
     "name": "agenthub-relay"
@@ -14,7 +14,7 @@
   }
  },
  "constraintDiscovery": {
-  "checkedAt": "2026-11-03T16:00:40Z",
+  "checkedAt": "2026-11-04T01:19:52Z",
   "checkedPaths": [
    "AGENTS.md",
    "CLAUDE.md",
@@ -340,7 +340,7 @@
    "evidence": [
     {
      "path": "skills/agenthub-relay/SKILL.md",
-     "line": 17,
+     "line": 18,
      "note": "用自带脚本调用 relay，并说明自己是谁。",
      "translations": {
       "en": {
@@ -350,7 +350,7 @@
     },
     {
      "path": "skills/agenthub-relay/SKILL.md",
-     "line": 36,
+     "line": 37,
      "note": "选择执行者与模型；只在用户要求时保存。",
      "translations": {
       "en": {
@@ -360,7 +360,7 @@
     },
     {
      "path": "skills/agenthub-relay/SKILL.md",
-     "line": 95,
+     "line": 96,
      "note": "与 Birdview 的先后顺序。",
      "translations": {
       "en": {
@@ -1495,7 +1495,7 @@
    "evidence": [
     {
      "path": "skills/agenthub-relay/SKILL.md",
-     "line": 6,
+     "line": 7,
      "note": "规划者按路由手册派发。",
      "translations": {
       "en": {
@@ -1522,7 +1522,7 @@
    "evidence": [
     {
      "path": "skills/agenthub-relay/SKILL.md",
-     "line": 17,
+     "line": 18,
      "note": "skill 让规划者运行 scripts/cli.mjs。",
      "translations": {
       "en": {
@@ -1757,7 +1757,7 @@
     }
    ],
    "explanation": "src/ 不按规划者分支；Claude 专属行为只在 mod 里。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-no-runtime-deps",
@@ -1811,7 +1811,7 @@
     }
    ],
    "explanation": "hub 只用 Node 标准库，插件不需要安装步骤。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-reserved-fail-closed",
@@ -1871,7 +1871,7 @@
     }
    ],
    "explanation": "v0.1 中 agy 与 ACP 只预留，配置也不能启用。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-worktree-only",
@@ -1931,7 +1931,7 @@
     }
    ],
    "explanation": "执行者只写自己的 worktree，规划者审阅后才 apply。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-light-tier-guard",
@@ -1980,7 +1980,7 @@
     }
    ],
    "explanation": "light 档必须有 1–10 条范围（不能是整个仓库）和至少一条检查。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-scope-overlap",
@@ -2030,7 +2030,7 @@
     }
    ],
    "explanation": "仍在运行或已完成未集成的写任务占用其范围。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-executor-role",
@@ -2091,7 +2091,7 @@
     }
    ],
    "explanation": "防止执行者递归派发，mod 也不在执行者里运行。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-secrets",
@@ -2148,7 +2148,7 @@
     }
    ],
    "explanation": "记录里只有变量名；输出、final.md 与存储补丁中的变量值都会脱敏。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-check-semantics",
@@ -2207,7 +2207,7 @@
     }
    ],
    "explanation": "与 Birdview 活动记录的检查语义一致。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-tests",
@@ -2254,7 +2254,7 @@
     }
    ],
    "explanation": "行为改动随附 node --test；mod 改动随附 claude plugin test。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-keepalive",
@@ -2303,7 +2303,7 @@
     }
    ],
    "explanation": "只用 fork，只在有任务运行、缓存推定仍热、未超上限时。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-skill-copy-generated",
@@ -2352,7 +2352,7 @@
     }
    ],
    "explanation": "手改副本会让安装出去的 skill 与经过测试的源码行为不一致。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9"
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4"
   },
   {
    "id": "c-planner-session",
@@ -2404,7 +2404,7 @@
     }
    ],
    "explanation": "分工与模型在每个规划者会话开头由用户确认，别的 agent 不能借用这个会话。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9",
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4",
    "translations": {
     "en": {
      "name": "Dispatch only in a confirmed planner session",
@@ -2453,7 +2453,7 @@
     }
    ],
    "explanation": "relay 不改任何 agent 自己的配置，规划者的模型也由宿主决定。",
-   "baselineCommit": "8696a7011e3d0230417c91b208793eed65dcb6f9",
+   "baselineCommit": "b71e8ded3e978f27b395f35ebcc5598b85790ce4",
    "translations": {
     "en": {
      "name": "Other agents' settings are read only",
