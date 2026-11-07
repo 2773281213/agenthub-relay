@@ -17,7 +17,7 @@ import { planDispatch } from './policy.mjs';
 import { createSessionStore, describeTiers, isSessionId, newSessionId, plainRoute, routeText } from './session.mjs';
 import { createStore, isAlive, isJobId, newJobId, TERMINAL } from './store.mjs';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 export const MAX_WAIT_SECONDS = 50;
 /** A watcher counts as active while it polled this recently. */
 export const WATCHER_ACTIVE_MS = 3 * 60_000;
