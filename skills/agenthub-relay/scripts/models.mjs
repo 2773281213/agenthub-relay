@@ -9,6 +9,8 @@
 //            is in the environment; defaults from ANTHROPIC_MODEL and settings.json
 //   dsh    - no model is chosen by the relay; its default and the models of its
 //            configured providers come from $DSH_HOME/settings.yaml
+//   agy    - `agy models` (one slug and display name per line, such as
+//            gemini-4-argon-high); the CLI keeps its own default model
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -19,7 +21,7 @@ import { childSpawnOptions, envValue, killTree, resolveCommand } from './platfor
 import { writeJsonAtomic } from './store.mjs';
 import { parseYaml } from './yaml-lite.mjs';
 
-export const MODEL_AGENTS = Object.freeze(['codex', 'claude', 'dsh']);
+export const MODEL_AGENTS = Object.freeze(['codex', 'claude', 'dsh', 'agy']);
 
 /** Claude Code's documented model aliases (code.claude.com/docs/en/model-config). */
 export const CLAUDE_ALIASES = Object.freeze(['default', 'best', 'fable', 'sonnet', 'opus', 'haiku', 'sonnet[1m]', 'opus[1m]', 'opusplan']);
@@ -29,6 +31,7 @@ export const CLAUDE_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', '
 /** How long a fetched model list is reused. */
 export const CATALOG_TTL_MS = 24 * 60 * 60_000;
 export const CODEX_LIST_TIMEOUT_MS = 15_000;
+export const AGY_LIST_TIMEOUT_MS = 20_000;
 const MAX_PAGES = 20;
 
 /** Check outcomes that let a route through. */
@@ -332,6 +335,77 @@ export async function listClaudeModels({ env = process.env, fetchImpl = globalTh
   }
 }
 
+/** The models in `agy models` output: a slug, then (after a tab or two or more spaces) its display name. */
+export function parseAgyModels(text) {
+  const models = [];
+  for (const line of (text ?? '').split(/\r?\n/)) {
+    const match = /^\s*(\S+)(?:(?:\t+| {2,})\s*(\S.*?))?\s*$/.exec(line);
+    if (!match || !MODEL_NAME.test(match[1]) || !/[a-z]/.test(match[1]) || match[1].endsWith(':')) continue;
+    if (models.some(m => m.id === match[1])) continue;
+    models.push({ id: match[1], model: match[1], ...(match[2] ? { displayName: match[2] } : {}) });
+  }
+  return models;
+}
+
+/**
+ * Runs `agy models` for the models the signed-in account can use. The process
+ * is ended (with its tree) if it does not finish in time.
+ */
+export function listAgyModels({ command = 'agy', env = process.env, platform = process.platform, timeoutMs = AGY_LIST_TIMEOUT_MS } = {}) {
+  let resolved;
+  try {
+    resolved = resolveCommand(command, { env, platform });
+  } catch (err) {
+    return Promise.reject(fail(err.code ?? 'agent-unusable', err.message));
+  }
+  if (!resolved) return Promise.reject(fail('agent-missing', `"${command}" is not on PATH; Antigravity cannot be asked for its models`));
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(resolved.file, [...resolved.prefixArgs, 'models'], {
+      env: { ...env, ...(resolved.env ?? {}), AGY_CLI_DISABLE_AUTO_UPDATE: 'true' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...childSpawnOptions(platform),
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (err, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err && child.exitCode === null && child.signalCode === null) {
+        if (!killTree(child.pid, { platform })) {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            // gone
+          }
+        }
+      }
+      if (err) reject(err);
+      else resolve(value);
+    };
+    const timer = setTimeout(
+      () => finish(fail('model-list-timeout', `agy models did not finish within ${Math.round(timeoutMs / 1000)} seconds`)),
+      timeoutMs,
+    );
+    child.stdout.on('data', chunk => {
+      stdout = `${stdout}${chunk}`.slice(-200_000);
+    });
+    child.stderr.on('data', chunk => {
+      stderr = `${stderr}${chunk}`.slice(-4000);
+    });
+    child.on('error', err => finish(fail('agent-unusable', `agy models could not start: ${err.message}`)));
+    child.on('close', code => {
+      const detail = stderr.trim().split('\n').slice(-3).join(' ').slice(0, 400);
+      if (code !== 0) return finish(fail('model-list-failed', `agy models exited (${code ?? 'signal'})${detail ? `: ${detail}` : ''}`));
+      const models = parseAgyModels(stdout);
+      if (models.length === 0) return finish(fail('model-list-failed', `agy models listed no models${detail ? `: ${detail}` : ''}`));
+      return finish(null, models);
+    });
+  });
+}
+
 function dshModels({ env }) {
   const { data } = dshSettings({ env });
   const providers = data?.['llm-pi-ai']?.providers;
@@ -381,6 +455,7 @@ function writeCache(file, key, entry) {
 function cacheKey(agent, config, env) {
   if (agent === 'codex') return `codex:${config?.executors?.codex?.command ?? 'codex'}`;
   if (agent === 'claude') return `claude:${envValue(env, 'ANTHROPIC_BASE_URL') || 'https://api.anthropic.com'}`;
+  if (agent === 'agy') return `agy:${config?.executors?.agy?.command ?? 'agy'}`;
   return agent;
 }
 
@@ -421,7 +496,17 @@ export async function catalogFor(agent, {
   }
 
   if (!fetch) {
-    return { ...base, source: null, models: [], error: { code: 'not-fetched', message: 'The codex model list has not been fetched yet; run "models codex".' } };
+    return { ...base, source: null, models: [], error: { code: 'not-fetched', message: `The ${agent} model list has not been fetched yet; run "models ${agent}".` } };
+  }
+  if (agent === 'agy') {
+    try {
+      const models = await listAgyModels({ command: config?.executors?.agy?.command ?? 'agy', env, platform });
+      const entry = { source: 'agy models', models, fetchedAt: new Date(now).toISOString() };
+      writeCache(cacheFile, key, entry);
+      return { ...base, ...entry };
+    } catch (err) {
+      return { ...base, source: null, models: [], error: { code: err.code ?? 'model-list-failed', message: err.message } };
+    }
   }
   try {
     const models = await listCodexModels({ command: config?.executors?.codex?.command ?? 'codex', env, platform, clientVersion });
@@ -518,6 +603,19 @@ export function checkRoute(route, catalog) {
         : { status: 'format-only', reason: `codex's default model is unknown, so effort ${effort} is checked by form only` };
     }
     return { status: 'verified', reason: `${model} is in codex's model list${effort ? ` and supports effort ${effort}` : ''}` };
+  }
+  if (executor === 'agy') {
+    if (model === undefined) {
+      return { status: 'agent-default', reason: `Antigravity uses its own default model${effort ? `; effort ${effort} is checked when the job runs` : ''}` };
+    }
+    const models = Array.isArray(catalog?.models) ? catalog.models : [];
+    if (catalog?.error || models.length === 0) {
+      return { status: 'format-only', reason: `${model} has a valid form; the Antigravity model list is not available, and agy rejects an unknown model when the job starts` };
+    }
+    if (!models.some(m => m.id === model)) {
+      return { status: 'not-in-list', code: 'model-unknown', reason: `Antigravity has no model "${model}" for this account (see "agy models")`, suggestions: suggestions(models, model) };
+    }
+    return { status: 'verified', reason: `${model} is in Antigravity's model list${effort ? `; effort ${effort} is checked when the job runs` : ''}` };
   }
   return { status: 'unsupported', code: 'unknown-executor', reason: `Unknown executor "${executor}"` };
 }

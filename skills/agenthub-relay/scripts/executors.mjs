@@ -3,7 +3,10 @@
 //   codex  - `codex exec --json` (JSONL events on stdout, final message via -o)
 //   claude - `claude -p --output-format json` (one JSON result on stdout)
 //   dsh    - `dsh --profile headless "<task>"` (final answer on stdout, exit 0/1)
-// Antigravity (agy) and the generic ACP executor are reserved and fail closed.
+//   agy    - Antigravity CLI with `--input-format stream-json --output-format
+//            stream-json`: the task as one user event on stdin, NDJSON events
+//            on stdout ending in a `result` event; Gemini models via --model
+// The generic ACP executor is reserved and fails closed.
 
 import path from 'node:path';
 
@@ -218,6 +221,78 @@ const ADAPTERS = Object.freeze({
     parse({ exitCode, stdout, stderr }) {
       const ok = exitCode === 0;
       return { ok, summary: (stdout ?? '').trim(), error: ok ? undefined : tail(stderr) || `dsh exited with code ${exitCode}` };
+    },
+  },
+  agy: {
+    label: 'Antigravity CLI',
+    invocation(job, cfg, files, prompt) {
+      // Streaming input takes the task on stdin, so its length is not bound by
+      // the command line; closing stdin ends the run after this one turn.
+      const argv = [cfg.command, '--input-format', 'stream-json', '--output-format', 'stream-json'];
+      // Headless, whatever would ask for approval is denied, and a denial ends
+      // the turn. Rules go in --settings, which lasts for this run only and
+      // never touches the user's settings.json. Even in its default mode agy
+      // writes inside its workspace, so a review denies writes and commands
+      // outright; a write tier accepts edits and may run its checks.
+      let settings;
+      if (job.write) {
+        argv.push('--mode', 'accept-edits');
+        if (job.checks?.length) settings = { permissions: { allow: job.checks.map(check => `command(${check})`) } };
+      } else {
+        settings = { permissions: { deny: ['write_file(*)', 'command(*)'] } };
+      }
+      if (settings) argv.push('--settings', JSON.stringify(settings));
+      argv.push(...selectionArgs(job, cfg), ...cfg.extraArgs);
+      return {
+        argv,
+        stdin: `${JSON.stringify({ event: 'user', message: { content: prompt } })}\n`,
+        // The CLI updates itself; not in the middle of a job.
+        env: { AGY_CLI_DISABLE_AUTO_UPDATE: 'true' },
+      };
+    },
+    parse({ exitCode, stdout, stderr }) {
+      let result;
+      let conversationId;
+      let streamed = '';
+      for (const line of (stdout ?? '').split('\n')) {
+        const text = line.trim();
+        if (!text.startsWith('{')) continue;
+        let event;
+        try {
+          event = JSON.parse(text);
+        } catch {
+          continue;
+        }
+        if (typeof event.conversation_id === 'string' && event.conversation_id) conversationId = event.conversation_id;
+        if (event.event === 'result' && event.result && typeof event.result === 'object') result = event.result;
+        const step = event.event === 'step_update' ? event.step_update : undefined;
+        if (step?.step_type === 'agent_response' && typeof step.text_delta === 'string') streamed += step.text_delta;
+      }
+      const status = result?.status;
+      const ok = exitCode === 0 && status === 'SUCCESS';
+      // A denial ends agy's turn, often before its final message: say what was
+      // denied, so the planner knows why the answer is short or missing.
+      const denied = (Array.isArray(result?.denied_actions) ? result.denied_actions : [])
+        .map(entry => [entry?.action, entry?.display_name].filter(Boolean).join(' '))
+        .filter(Boolean);
+      let summary = typeof result?.response === 'string' && result.response.trim() ? result.response : streamed.trim();
+      if (denied.length) {
+        const note = `Antigravity denied: ${denied.join(', ')}.`;
+        summary = summary ? `${summary.trimEnd()}\n\n${note}` : `${note} It ended its turn without a final message.`;
+      }
+      let error;
+      if (!ok) {
+        if (typeof result?.error === 'string' && result.error) error = `${status ?? 'ERROR'}: ${result.error}`;
+        else if (status && status !== 'SUCCESS') error = `Antigravity ended the run with status ${status}${tail(stderr) ? `: ${tail(stderr)}` : ''}`;
+        else error = tail(stderr) || (result ? `agy exited with code ${exitCode}` : `agy exited with code ${exitCode} without a result event`);
+      }
+      return {
+        ok,
+        summary,
+        sessionId: result?.conversation_id || conversationId,
+        usage: result?.usage,
+        error,
+      };
     },
   },
 });

@@ -4,6 +4,9 @@
 //   codex exec --json ... -        JSONL events on stdout, final message to -o
 //   claude -p --output-format json one JSON result on stdout
 //   dsh --profile headless "task"  final answer on stdout, exit 0 or 1
+//   agy --input-format stream-json --output-format stream-json
+//                                  one user event on stdin, NDJSON events out
+//   agy models                     model slugs and display names
 // What it does comes from a line `FAKE {...json...}` in the task text.
 
 import { spawn } from 'node:child_process';
@@ -11,10 +14,28 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const args = process.argv.slice(2);
-const mode = args[0] === 'exec' ? 'codex' : args.includes('-p') ? 'claude' : args[0] === '--profile' ? 'dsh' : 'other';
+const mode = args[0] === 'exec' ? 'codex'
+  : args.includes('--input-format') ? 'agy'
+  : args.includes('-p') ? 'claude'
+  : args[0] === '--profile' ? 'dsh'
+  : 'other';
 
 if (args[0] === '--version') {
   process.stdout.write('fake-agent 0.0.0\n');
+  process.exit(0);
+}
+
+if (args[0] === 'models') {
+  // `agy models`. FAKE_AGY_MODELS=fail exits non-zero; otherwise it is the
+  // list to print, one "slug   Display Name" per line.
+  if (process.env.FAKE_AGY_MODELS === 'fail') {
+    process.stderr.write('Error: authentication required\n');
+    process.exit(1);
+  }
+  const lines = process.env.FAKE_AGY_MODELS
+    ? JSON.parse(process.env.FAKE_AGY_MODELS)
+    : ['gemini-4-argon-high       Gemini 4 Argon (High)', 'gemini-4-argon-medium     Gemini 4 Argon (Medium)', 'gemini-3.8-flash-medium   Gemini 3.8 Flash (Medium)'];
+  process.stdout.write(`${lines.join('\n')}\n`);
   process.exit(0);
 }
 
@@ -75,7 +96,19 @@ async function readStdin() {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-const prompt = mode === 'dsh' ? args[args.length - 1] : await readStdin();
+function agyPrompt(text) {
+  // The first `user` event; its content is a string or a list of text blocks.
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    const event = JSON.parse(line);
+    if (event.event !== 'user') continue;
+    const content = event.message?.content;
+    return Array.isArray(content) ? content.map(block => block.text).join('') : content;
+  }
+  return '';
+}
+
+const prompt = mode === 'dsh' ? args[args.length - 1] : mode === 'agy' ? agyPrompt(await readStdin()) : await readStdin();
 const match = /^FAKE (\{.*\})$/m.exec(prompt);
 const plan = match ? JSON.parse(match[1]) : {};
 const echoed = plan.echoEnv ? ` ${process.env[plan.echoEnv] ?? ''}` : '';
@@ -143,6 +176,23 @@ if (mode === 'codex') {
     num_turns: 1,
     usage: { input_tokens: 20, output_tokens: 4 },
   })}\n`);
+  process.exit(plan.exitCode ?? (failed ? 1 : 0));
+} else if (mode === 'agy') {
+  const id = 'fake-conversation';
+  const out = [
+    { event: 'init', conversation_id: id, init: { cwd: process.cwd(), permission_mode: args.includes('accept-edits') ? 'accept-edits' : 'request-review' } },
+    { event: 'step_update', step_update: { conversation_id: id, step_index: 0, state: 'DONE', step_type: 'agent_response', text_delta: failed ? '' : message } },
+    { event: 'result', result: {
+      conversation_id: id,
+      status: failed ? 'ERROR' : 'SUCCESS',
+      response: failed ? '' : message,
+      ...(failed ? { error: 'fake agy failure' } : {}),
+      duration_seconds: 1,
+      num_turns: 1,
+      usage: { input_tokens: 30, output_tokens: 5, total_tokens: 35 },
+    } },
+  ];
+  process.stdout.write(`${out.map(event => JSON.stringify(event)).join('\n')}\n`);
   process.exit(plan.exitCode ?? (failed ? 1 : 0));
 } else if (mode === 'dsh') {
   if (failed) {

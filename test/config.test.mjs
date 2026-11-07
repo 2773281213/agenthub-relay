@@ -29,6 +29,8 @@ test('the planner name maps planner ids and MCP client names', () => {
   assert.equal(plannerFromName('codex-mcp-client'), 'codex');
   assert.equal(plannerFromName('claude-code'), 'claude');
   assert.equal(plannerFromName('Antigravity'), 'agy');
+  assert.equal(plannerFromName('agy'), 'agy');
+  assert.equal(plannerFromName('gemini-cli-mcp-client'), 'unknown', 'Gemini CLI is not Antigravity');
   assert.equal(plannerFromName('deepseek-harness'), 'dsh');
   assert.equal(plannerFromName('cursor'), 'unknown');
   assert.equal(plannerFromName(undefined), 'unknown');

@@ -37,7 +37,7 @@ export const TOOLS = Object.freeze([
   {
     name: 'relay_agents',
     description:
-      'List the executors (codex, claude, dsh; agy and acp are reserved), whether each is installed, which planner you are taken to be, the active profile and why, the executor, model and effort each tier goes to, each agent\'s own default model, and the current planner session.',
+      'List the executors (codex, claude, dsh, agy; acp is reserved), whether each is installed, which planner you are taken to be, the active profile and why, the executor, model and effort each tier goes to, each agent\'s own default model, and the current planner session.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {

@@ -6,7 +6,7 @@
     {
       "name": "agenthub-relay",
       "source": "./",
-      "description": "Hand coding jobs to Codex, Claude Code or DeepSeek Harness in isolated git worktrees, and keep a waiting Claude Code planner's prompt cache warm."
+      "description": "Hand coding jobs to Codex, Claude Code, DeepSeek Harness or Antigravity in isolated git worktrees, and keep a waiting Claude Code planner's prompt cache warm."
     }
   ]
 }

@@ -24,7 +24,6 @@ export const PLANNER_IDS = Object.freeze(['claude', 'codex', 'dsh', 'agy']);
  * fails closed with this reason.
  */
 export const RESERVED = Object.freeze({
-  agy: 'Antigravity (agy) is reserved in agenthub-relay; its headless adapter is not implemented yet.',
   acp: 'The generic ACP executor is reserved in agenthub-relay; it is not implemented yet.',
 });
 
@@ -57,6 +56,12 @@ export const DEFAULT_CONFIG = Object.freeze({
     },
     // dsh documents no per-run model flag: its model is set in its own settings.
     dsh: { command: 'dsh', passEnv: [], timeoutMinutes: 30, extraArgs: [], modelArgs: [], effortArgs: [] },
+    // Antigravity CLI: Gemini models by the slugs `agy models` lists, such as
+    // gemini-4-argon-high. It signs in with its own cached credentials.
+    agy: {
+      command: 'agy', passEnv: [], timeoutMinutes: 45, extraArgs: [],
+      modelArgs: ['--model', '{model}'], effortArgs: ['--effort', '{effort}'],
+    },
   },
   checks: { timeoutMinutes: 10 },
   light: { maxScopeEntries: 10, maxChangedFiles: 10 },
@@ -98,7 +103,9 @@ export function plannerFromName(name) {
   if (PLANNER_IDS.includes(text)) return text;
   if (text.includes('claude')) return 'claude';
   if (text.includes('codex')) return 'codex';
-  if (text.includes('antigravity') || text.includes('gemini') || text === 'agy') return 'agy';
+  // Antigravity only: Gemini CLI ("gemini-cli-mcp-client") is a different
+  // agent and is not taken for Antigravity.
+  if (text.includes('antigravity')) return 'agy';
   if (text.includes('deepseek') || text.includes('dsh')) return 'dsh';
   return 'unknown';
 }
@@ -408,7 +415,7 @@ export const SETTABLE_KEYS = Object.freeze([
   'profile',
   'plannerProfiles.<planner>',
   'profiles.<name>.<deep|light|review>',
-  'executors.<codex|claude|dsh>.<model|effort|command|timeoutMinutes>',
+  'executors.<codex|claude|dsh|agy>.<model|effort|command|timeoutMinutes>',
   'checks.shell',
   'sessions.required',
 ]);

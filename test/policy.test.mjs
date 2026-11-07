@@ -51,7 +51,7 @@ test('an executor process may not dispatch', () => {
 });
 
 test('reserved executors fail closed with a reason', () => {
-  for (const executor of ['agy', 'acp']) {
+  for (const executor of ['acp']) {
     assert.throws(
       () => planDispatch({ config, request: { task: 'x', tier: 'review', executor } }),
       err => err.code === 'reserved-executor' && /reserved/.test(err.message) && err.details.executor === executor,
@@ -128,7 +128,7 @@ test('configuration files merge over the defaults and cannot enable reserved exe
     const planner = loadConfig({ root: dir, env: { AGENTHUB_RELAY_PROFILE: 'codex-planner' } });
     assert.deepEqual(planner.mapping, { deep: 'claude', light: 'dsh', review: 'codex' });
 
-    fs.writeFileSync(file, JSON.stringify({ executors: { agy: { command: 'agy' } } }));
+    fs.writeFileSync(file, JSON.stringify({ executors: { acp: { command: 'acp' } } }));
     assert.throws(() => loadConfig({ root: dir, env: {} }), err => err.code === 'config-invalid' && /reserved/.test(err.message));
     fs.writeFileSync(file, JSON.stringify({ surprise: true }));
     assert.throws(() => loadConfig({ root: dir, env: {} }), err => err.code === 'config-invalid');

@@ -102,7 +102,7 @@ The relay serves ten `relay_*` tools over stdio: `node /absolute/path/to/agenthu
 - DeepSeek Harness: its public documentation that we checked does not show the MCP configuration file; add a stdio server named `agenthub-relay` with command `node` and arguments `/absolute/path/to/agenthub-relay/src/cli.mjs mcp` through dsh's own MCP settings. The skill route above needs none of this.
 - Antigravity: `~/.gemini/config/mcp_config.json` (all projects) or `<workspace>/.agents/mcp_config.json`, under `"mcpServers"`.
 
-Antigravity can plan. As an executor it is reserved: dispatching to `agy` fails with a reason until its adapter exists.
+Antigravity can plan, and it can execute: the `agy` executor runs the Antigravity CLI headless and takes Gemini models by the slugs `agy models` lists, such as `gemini-4-argon-high`. Install the CLI (`agy`) and sign in once in an interactive `agy` session before dispatching to it. Gemini models are reached only through Antigravity; Gemini CLI is neither an executor nor taken for the Antigravity planner.
 
 ## Sources
 

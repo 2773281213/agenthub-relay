@@ -6,7 +6,8 @@ These rules apply to every agent working in this repository, whichever agent is 
 
 - Keep the hub planner-neutral: code under `src/` must not assume which agent is the planner; Claude Code specific behavior lives only in `hooks/`, `types/` and `.claude-plugin/`.
 - Use no runtime dependencies: the hub ships as plain ESM JavaScript for Node.js 20 or newer, and code under `src/` imports only the Node.js standard library.
-- Treat Antigravity (`agy`) and the generic ACP executor as reserved until their adapters exist: dispatching to a reserved executor must fail closed with an error that names the reason.
+- Treat the generic ACP executor as reserved until its adapter exists: dispatching to a reserved executor must fail closed with an error that names the reason.
+- Reach Gemini models only through Antigravity (the `agy` executor, Antigravity CLI); do not add a Gemini CLI executor or take Gemini CLI for the Antigravity planner.
 - Generate `skills/agenthub-relay/scripts/` from `src/` with `npm run bundle:skill` and never edit that copy by hand; it must stay identical to `src/`, which `npm test` checks.
 
 ## Execution safety rules

@@ -4,7 +4,7 @@
 
 ## 中文
 
-agenthub-relay 是一个**中立的 agent 调度 hub**：规划者通过 skill 自带的脚本（或 MCP 的 `relay_*` 工具）把编码任务派给 Codex、Claude Code 或 DeepSeek Harness；每个任务在独立的 git worktree 里执行，规划者看过结果后再决定 apply 或 discard。谁当规划者、每个档位给哪个执行者、用什么模型，都能在使用中按对话调整。附带一个 Claude Code mod：Claude Code 当规划者、等待其他 agent 时，每 55 分钟保活一次主会话的提示缓存，任务结束时唤醒会话。
+agenthub-relay 是一个**中立的 agent 调度 hub**：规划者通过 skill 自带的脚本（或 MCP 的 `relay_*` 工具）把编码任务派给 Codex、Claude Code、DeepSeek Harness 或 Antigravity（Gemini 模型）；每个任务在独立的 git worktree 里执行，规划者看过结果后再决定 apply 或 discard。谁当规划者、每个档位给哪个执行者、用什么模型，都能在使用中按对话调整。附带一个 Claude Code mod：Claude Code 当规划者、等待其他 agent 时，每 55 分钟保活一次主会话的提示缓存，任务结束时唤醒会话。
 
 ### 工作方式
 
@@ -18,7 +18,7 @@ agenthub-relay ── 配置（规划者 → profile → 各档位的执行者�
    │               任务存储（.agenthub/jobs，原子写、心跳）
    │               Git 隔离（每任务一个 worktree，补丁 apply/discard）
    ▼  分离的 worker 进程（进程组、超时、取消、检查）
-执行者：codex exec --json │ claude -p --output-format json │ dsh --profile headless
+执行者：codex exec --json │ claude -p --output-format json │ dsh --profile headless │ agy --output-format stream-json
 ```
 
 | 档位 | 用途 | 必填 | 默认执行者（`thread16` / `codex-planner`） |
@@ -31,7 +31,7 @@ agenthub-relay ── 配置（规划者 → profile → 各档位的执行者�
 
 ### 安装
 
-需要 Node.js 20 以上和 git，再加至少一个执行者 CLI（已登录的 `codex`、`claude` 或 `dsh`）。支持 Linux、macOS 和 Windows。
+需要 Node.js 20 以上和 git，再加至少一个执行者 CLI（已登录的 `codex`、`claude`、`dsh` 或 `agy`）。支持 Linux、macOS 和 Windows。
 
 Windows 说明：npm、pnpm 装的 `codex.cmd`、`dsh.cmd` 这类外壳会被解析成“node + 脚本”直接启动，任务原样传递；解析不了时 `doctor` 会提示把 `executors.<id>.command` 设成 `.exe` 或 `.js` 的路径。检查命令默认在 cmd.exe 里运行，需要 POSIX 写法时用 `config set checks.shell "C:\Program Files\Git\bin\bash.exe"` 改用 Git Bash。取消和超时会结束整棵进程树（taskkill）。
 
@@ -68,8 +68,9 @@ Claude Code 带插件时也可以直接用 `relay_*` 工具：派发结果里 `w
 
 - **每个规划者会话先确认**：`session start --planner <自己>` 列出已保存的分工（deep、light、review 各由谁执行、用什么模型和推理强度、各自来自哪里）、各家当前的默认模型、各家可用的模型和核对结果。规划者把这些转告用户，问沿用还是修改；`session confirm <id> --reuse` 沿用，或带 `--deep/--light/--review executor[:model][@effort]` 修改。修改先核对，核对通过才保存（默认本仓库的 `.agenthub/config.json`，`--user` 存到 `~/.config/agenthub-relay/config.json`），下次开会话时作为“已保存的设置”列出。没有确认过的会话不能派发（`session-required`），换了 agent 用别人的会话派发也会被拒（`planner-mismatch`）。脚本或 CI 可用 `config set sessions.required false` 关掉这一步。
 - **规划者是谁**：`--planner`、`AGENTHUB_RELAY_PLANNER` 或 MCP 客户端名（如 `codex-mcp-client` → codex）。内置规则：Claude Code 规划用 `thread16`（深任务给 Codex），Codex 规划用 `codex-planner`（深任务给 Claude Code）。
-- **模型的获取与核对**：`models [codex|claude|dsh]` 列出各家可用的模型和默认模型。codex 通过 `codex app-server` 的 `model/list` 取当前账号可用的模型及每个模型支持的推理强度，核对时模型必须在列表里、强度必须受支持；claude 列出官方别名（有 `ANTHROPIC_API_KEY` 时再加 API 返回的列表），只检查格式；各家默认模型从它们自己的配置文件读出（codex 的 `config.toml`、claude 的 `settings.json`、dsh 的 `settings.yaml`），relay 只读不写。`models check <agent> <model> [--effort e]` 单独核对。
+- **模型的获取与核对**：`models [codex|claude|dsh|agy]` 列出各家可用的模型和默认模型。codex 通过 `codex app-server` 的 `model/list` 取当前账号可用的模型及每个模型支持的推理强度，核对时模型必须在列表里、强度必须受支持；claude 列出官方别名（有 `ANTHROPIC_API_KEY` 时再加 API 返回的列表），只检查格式；各家默认模型从它们自己的配置文件读出（codex 的 `config.toml`、claude 的 `settings.json`、dsh 的 `settings.yaml`），relay 只读不写。`models check <agent> <model> [--effort e]` 单独核对。
 - **DeepSeek Harness** 用它自己的配置：relay 显示它的默认模型，但不替它选模型，指定时以 `model-unsupported` 拒绝。
+- **Gemini 模型只经 Antigravity**：执行者 `agy` 是 Antigravity CLI（不是 Gemini CLI），模型写 `agy models` 列出的 slug，如 `--review agy:gemini-4-argon-high`；列表里没有的名字（例如 Gemini CLI 的 `gemini-4-argon`）以 `model-unknown` 拒绝并给出建议。派发前先装好 `agy` 并在交互式 `agy` 里登录一次。
 - **单个任务**：`dispatch --executor claude --model opus --effort high`，同样先核对。`config set` 写带模型的键时也先核对。
 - **规划者自己的模型**由宿主决定（Claude Code 用 `/model`），relay 只读出来显示。
 
@@ -103,7 +104,7 @@ claude plugin validate . # 插件清单与 hooks 模块
 
 ### 已知限制
 
-- 真实的 Codex、dsh 没有在本仓库的测试环境里跑过：适配器按各自官方文档写成，用伪造的二进制做契约测试；codex 的推理强度参数写法来自其 `-c` 配置覆盖方式，未在真实 CLI 上验证。
+- 真实的 Codex、dsh、Antigravity CLI 没有在本仓库的测试环境里跑过：适配器按各自官方文档写成，用伪造的二进制做契约测试；codex 的推理强度参数写法来自其 `-c` 配置覆盖方式，未在真实 CLI 上验证。
 - 只有 Claude Code 会遵守 `disable-model-invocation`；其他宿主靠 skill 描述里的“仅在用户调用时使用”。
 - Claude Code 以外的规划者没有保活，用 `wait` 轮询。
 - claude 的模型名只检查格式，写错要到任务运行时才报错；codex 的 `model/list` 属于 app-server 协议，官方标为不稳定，取不到列表时 codex 的模型无法核对、会被拒绝（不指定模型则用它自己的默认）。
@@ -113,7 +114,7 @@ claude plugin validate . # 插件清单与 hooks 模块
 
 ## English
 
-agenthub-relay is a **planner-neutral hub**: a planner runs the script bundled with the skill (or calls the `relay_*` MCP tools) to hand coding jobs to Codex, Claude Code or DeepSeek Harness. Each job runs in its own git worktree, and the planner reads the result before applying or discarding it. Who plans, which executor each tier goes to and which model it runs can all be chosen during use. A Claude Code mod keeps a waiting Claude Code planner's prompt cache warm with a refresh every 55 minutes, and wakes the session when a job ends.
+agenthub-relay is a **planner-neutral hub**: a planner runs the script bundled with the skill (or calls the `relay_*` MCP tools) to hand coding jobs to Codex, Claude Code, DeepSeek Harness or Antigravity (Gemini models). Each job runs in its own git worktree, and the planner reads the result before applying or discarding it. Who plans, which executor each tier goes to and which model it runs can all be chosen during use. A Claude Code mod keeps a waiting Claude Code planner's prompt cache warm with a refresh every 55 minutes, and wakes the session when a job ends.
 
 ### Where it comes from
 
@@ -125,7 +126,7 @@ From the visible 16th reply of [linux.do topic 3028918](https://linux.do/t/topic
 
 ### Install
 
-Node.js 20 or newer, git, and at least one signed-in executor CLI (`codex`, `claude` or `dsh`). Linux, macOS and Windows are supported. On Windows, npm and pnpm shims such as `codex.cmd` are resolved to node plus the script they wrap, so tasks pass verbatim (`doctor` says when a shim cannot be read; then set `executors.<id>.command` to the `.exe` or `.js` file); checks run in cmd.exe unless `checks.shell` names another shell, such as Git Bash; cancels and timeouts end the whole process tree with taskkill.
+Node.js 20 or newer, git, and at least one signed-in executor CLI (`codex`, `claude`, `dsh` or `agy`). Linux, macOS and Windows are supported. On Windows, npm and pnpm shims such as `codex.cmd` are resolved to node plus the script they wrap, so tasks pass verbatim (`doctor` says when a shim cannot be read; then set `executors.<id>.command` to the `.exe` or `.js` file); checks run in cmd.exe unless `checks.shell` names another shell, such as Git Bash; cancels and timeouts end the whole process tree with taskkill.
 
 - **Any planner (Codex, DeepSeek Harness, Antigravity, Claude Code)**: install the skill; no MCP setup is needed. `npx skills add 2773281213/agenthub-relay --skill agenthub-relay`, or copy the whole `skills/agenthub-relay` folder to where your planner reads skills: `~/.agents/skills` for Codex and Antigravity, `~/.dsh/skills` or `~/.agents/skills` for DeepSeek Harness (one copy only, to avoid duplicate names), `~/.claude/skills` for Claude Code. The explicit-only entries `relay-review`, `relay-status` and `relay-config` sit next to it in `skills/`.
 - **Claude Code plugin** (the four skills, the MCP server, the keep-alive mod and `/relay`): `/plugin install agenthub-relay --marketplace 2773281213/agenthub-relay` at the prompt, or `claude plugin install agenthub-relay --marketplace 2773281213/agenthub-relay` from a shell.
@@ -138,7 +139,7 @@ Follow the [routing skill](skills/agenthub-relay/SKILL.md): start each planner s
 
 ### Choosing planner, executors and models
 
-Every planner session starts with `session start --planner <you>`: it lists the saved roles (the executor, model and effort of `deep`, `light` and `review`, and where each comes from), each agent's own default model, the models each agent offers and a check of each. The planner asks the user, then runs `session confirm <id> --reuse` or passes `--deep`, `--light` or `--review` as `executor[:model][@effort]`; changes are checked first and saved for later sessions (the project's `.agenthub/config.json`, or with `--user` `~/.config/agenthub-relay/config.json`). Dispatch needs a confirmed session (`session-required`), and another agent cannot dispatch in it (`planner-mismatch`); `config set sessions.required false` turns this off for scripts. `models [codex|claude|dsh]` lists models: codex through `codex app-server`'s `model/list` (models and their reasoning efforts are checked exactly), claude through its documented aliases (checked by form; the API list is added when `ANTHROPIC_API_KEY` is set), and each agent's default from its own settings file, which the relay only reads. DeepSeek Harness uses its own settings and refuses a model from the relay. A single job still takes `--executor`, `--model` and `--effort`, checked the same way. The planner's own model is the host's to set (`/model` in Claude Code).
+Every planner session starts with `session start --planner <you>`: it lists the saved roles (the executor, model and effort of `deep`, `light` and `review`, and where each comes from), each agent's own default model, the models each agent offers and a check of each. The planner asks the user, then runs `session confirm <id> --reuse` or passes `--deep`, `--light` or `--review` as `executor[:model][@effort]`; changes are checked first and saved for later sessions (the project's `.agenthub/config.json`, or with `--user` `~/.config/agenthub-relay/config.json`). Dispatch needs a confirmed session (`session-required`), and another agent cannot dispatch in it (`planner-mismatch`); `config set sessions.required false` turns this off for scripts. `models [codex|claude|dsh|agy]` lists models: codex through `codex app-server`'s `model/list` (models and their reasoning efforts are checked exactly), claude through its documented aliases (checked by form; the API list is added when `ANTHROPIC_API_KEY` is set), and each agent's default from its own settings file, which the relay only reads. DeepSeek Harness uses its own settings and refuses a model from the relay. Gemini models go only through Antigravity: the `agy` executor is the Antigravity CLI (not Gemini CLI), its models are the slugs `agy models` lists, such as `agy:gemini-4-argon-high`, and a name not in that list is refused with suggestions; install `agy` and sign in once interactively before dispatching to it. A single job still takes `--executor`, `--model` and `--effort`, checked the same way. The planner's own model is the host's to set (`/model` in Claude Code).
 
 ### Develop
 
@@ -146,7 +147,7 @@ Every planner session starts with `session start --planner <you>`: it lists the 
 
 ### Limitations
 
-Real Codex and dsh runs are not part of the test suite: their adapters follow each CLI's documentation and are contract-tested against a fake executor, and codex's effort flag follows its `-c` configuration override without a real run. Only Claude Code honors `disable-model-invocation`. Planners other than Claude Code have no keep-alive and poll with `wait`. Claude model names are checked by form only; codex's `model/list` is part of its app-server protocol, marked unstable, and without the list a codex model cannot be checked and is refused. That the planner asked the user before confirming a session rests on the skill's instructions; the relay can only require a confirmed session. Scope declarations and the out-of-scope audit are checks after the fact, not filesystem locks. Whether a fork resets Claude Code's idle-compaction timer is undocumented; the mod records compactions and `/relay` shows them.
+Real Codex, dsh and Antigravity CLI runs are not part of the test suite: their adapters follow each CLI's documentation and are contract-tested against a fake executor, and codex's effort flag follows its `-c` configuration override without a real run. Only Claude Code honors `disable-model-invocation`. Planners other than Claude Code have no keep-alive and poll with `wait`. Claude model names are checked by form only; codex's `model/list` is part of its app-server protocol, marked unstable, and without the list a codex model cannot be checked and is refused. That the planner asked the user before confirming a session rests on the skill's instructions; the relay can only require a confirmed session. Scope declarations and the out-of-scope audit are checks after the fact, not filesystem locks. Whether a fork resets Claude Code's idle-compaction timer is undocumented; the mod records compactions and `/relay` shows them.
 
 ## License
 

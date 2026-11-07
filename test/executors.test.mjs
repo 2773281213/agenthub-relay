@@ -60,8 +60,70 @@ test('dsh takes the task as its positional argument and refuses one that is too 
   );
 });
 
+test('agy runs the Antigravity CLI with the task as one stream-json user event, edits accepted only for write tiers', () => {
+  const agy = adapterFor('agy');
+  assert.equal(agy.label, 'Antigravity CLI');
+  const write = agy.invocation(job(), config.executors.agy, files, 'PROMPT "quoted"\nline two');
+  assert.deepEqual(write.argv, [
+    'agy', '--input-format', 'stream-json', '--output-format', 'stream-json', '--mode', 'accept-edits',
+    '--settings', JSON.stringify({ permissions: { allow: ['command(npm test)', 'command(npm run lint -- --max-warnings 0)'] } }),
+  ]);
+  assert.ok(write.stdin.endsWith('\n'), 'one line, so the CLI can read the event');
+  assert.deepEqual(JSON.parse(write.stdin), { event: 'user', message: { content: 'PROMPT "quoted"\nline two' } });
+  assert.equal(write.env.AGY_CLI_DISABLE_AUTO_UPDATE, 'true', 'the CLI does not update itself mid-job');
+  assert.ok(!write.argv.includes('-p'), 'a -p prompt is dropped in streaming mode');
+  const unchecked = agy.invocation(job({ checks: [] }), config.executors.agy, files, 'P');
+  assert.ok(!unchecked.argv.includes('--settings'), 'no rules without checks');
+
+  // agy writes inside its workspace even in its default mode: a review denies it.
+  const review = agy.invocation(job({ tier: 'review', write: false, checks: [] }), config.executors.agy, files, 'P');
+  assert.deepEqual(review.argv, [
+    'agy', '--input-format', 'stream-json', '--output-format', 'stream-json',
+    '--settings', '{"permissions":{"deny":["write_file(*)","command(*)"]}}',
+  ]);
+  assert.ok(!review.argv.includes('--dangerously-skip-permissions'));
+  assert.ok(!review.argv.includes('--mode'));
+
+  const long = agy.invocation(job(), config.executors.agy, files, 'x'.repeat(MAX_ARGV_PROMPT_BYTES + 1));
+  assert.ok(!long.argv.some(arg => arg.length > 1000), 'a long task stays off the command line');
+});
+
+test('agy output: the result event gives the answer, conversation and usage; errors keep their status', () => {
+  const agy = adapterFor('agy');
+  const events = result => [
+    JSON.stringify({ event: 'init', conversation_id: 'conv-1', init: { cwd: '/w', permission_mode: 'accept-edits' } }),
+    JSON.stringify({ event: 'step_update', step_update: { conversation_id: 'conv-1', step_index: 0, state: 'DONE', step_type: 'agent_response', text_delta: 'partial' } }),
+    ...(result ? [JSON.stringify({ event: 'result', result })] : []),
+  ].join('\n');
+
+  const done = agy.parse({ exitCode: 0, stdout: events({ conversation_id: 'conv-1', status: 'SUCCESS', response: 'Changed parse().', usage: { input_tokens: 9, output_tokens: 2 } }), stderr: '' });
+  assert.deepEqual(done, { ok: true, summary: 'Changed parse().', sessionId: 'conv-1', usage: { input_tokens: 9, output_tokens: 2 }, error: undefined });
+
+  const badModel = agy.parse({ exitCode: 1, stdout: events({ conversation_id: '', status: 'ERROR', response: '', error: 'invalid model selection (gemini-4-argon)' }), stderr: '' });
+  assert.equal(badModel.ok, false);
+  assert.equal(badModel.sessionId, 'conv-1');
+  assert.equal(badModel.error, 'ERROR: invalid model selection (gemini-4-argon)');
+
+  const canceled = agy.parse({ exitCode: 0, stdout: events({ conversation_id: 'conv-1', status: 'CANCELED', response: '' }), stderr: '' });
+  assert.equal(canceled.ok, false, 'exit 0 is not enough: the status must be SUCCESS');
+  assert.match(canceled.error, /CANCELED/);
+
+  // Seen with agy 1.5.2: a denied command ends the turn with an empty response.
+  const deniedEarly = agy.parse({ exitCode: 0, stdout: events({ conversation_id: 'conv-1', status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] }), stderr: '' });
+  assert.equal(deniedEarly.ok, true, 'the edits it made are still the job');
+  assert.equal(deniedEarly.summary, 'partial\n\nAntigravity denied: command RunCommand.', 'the streamed text stands in for the missing response');
+  const deniedSilent = agy.parse({ exitCode: 0, stdout: [JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } })].join('\n'), stderr: '' });
+  assert.equal(deniedSilent.summary, 'Antigravity denied: command RunCommand. It ended its turn without a final message.');
+  const deniedAfter = agy.parse({ exitCode: 0, stdout: events({ status: 'SUCCESS', response: 'Done.\n', denied_actions: [{ action: 'write_file' }] }), stderr: '' });
+  assert.equal(deniedAfter.summary, 'Done.\n\nAntigravity denied: write_file.');
+
+  const noResult = agy.parse({ exitCode: 1, stdout: '', stderr: 'Error: authentication required\n' });
+  assert.equal(noResult.ok, false);
+  assert.equal(noResult.error, 'Error: authentication required');
+  assert.match(agy.parse({ exitCode: 0, stdout: events(undefined), stderr: '' }).error, /without a result event/);
+});
+
 test('reserved executors fail closed', () => {
-  assert.throws(() => adapterFor('agy'), err => err.code === 'reserved-executor' && /Antigravity/.test(err.message));
   assert.throws(() => adapterFor('acp'), err => err.code === 'reserved-executor');
   assert.throws(() => adapterFor('aider'), err => err.code === 'unknown-executor');
 });
@@ -139,7 +201,9 @@ test('availability is looked up on PATH; reserved executors are listed with thei
     assert.deepEqual(listed.map(e => e.id), ['codex', 'claude', 'dsh', 'agy', 'acp']);
     assert.ok(listed.filter(e => !e.reserved).every(e => e.available === false));
     assert.deepEqual(listed.find(e => e.id === 'codex').tiers, ['deep']);
-    assert.match(listed.find(e => e.id === 'agy').reason, /reserved/);
+    assert.match(listed.find(e => e.id === 'acp').reason, /reserved/);
+    assert.equal(listed.find(e => e.id === 'agy').reserved, undefined, 'Antigravity is a live executor');
+    assert.equal(listed.find(e => e.id === 'agy').label, 'Antigravity CLI');
 
     const fakeCodex = path.join(dir, 'codex');
     fs.writeFileSync(fakeCodex, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
@@ -170,6 +234,9 @@ test('a job model and effort go on each command line through the documented flag
   const dsh = adapterFor('dsh').invocation(job({ tier: 'light', model: 'deepseek-flash' }), dshCfg, files, 'PROMPT').argv;
   assert.deepEqual(dsh.slice(-2), ['--model=deepseek-flash', 'PROMPT']);
   assert.deepEqual(selectionArgs({}, config.executors.dsh), []);
+
+  const agy = adapterFor('agy').invocation(job({ tier: 'review', write: false, model: 'gemini-4-argon-high', effort: 'high' }), config.executors.agy, files, 'P').argv;
+  assert.deepEqual(agy.slice(-4), ['--model', 'gemini-4-argon-high', '--effort', 'high']);
 });
 
 test('relay_agents reports default models and which executors can take one', () => {
@@ -178,6 +245,8 @@ test('relay_agents reports default models and which executors can take one', () 
   assert.equal(byId.codex.choosesModel, true);
   assert.equal(byId.claude.choosesEffort, true);
   assert.equal(byId.dsh.choosesModel, false);
+  assert.equal(byId.agy.choosesModel, true);
+  assert.equal(byId.agy.choosesEffort, true);
 });
 
 test('executors on Windows keep the variables Windows programs need, and nothing else unnamed', () => {

@@ -34,7 +34,7 @@ A planner session comes first (JSON on stdout; add --planner <claude|codex|dsh|a
 
 Planning:
   agenthub-relay agents                      Executors, your profile and why, each tier's executor and model
-  agenthub-relay models [codex|claude|dsh] [--refresh]   The models each agent offers and uses by default
+  agenthub-relay models [codex|claude|dsh|agy] [--refresh]   The models each agent offers and uses by default
   agenthub-relay models check <agent> [<model>] [--effort <level>]
   agenthub-relay dispatch --session <sessionId> --tier <deep|light|review> (--task <text> | --task-file <file|->)
                  [--scope <path>]... [--check <command>]... [--executor <id>]
@@ -247,7 +247,7 @@ async function models(args) {
     return 0;
   }
   const { values, positionals } = parse(args, { refresh: { type: 'boolean' } }, { positionals: 'many' });
-  if (positionals.length > 1) throw new UsageError('models [codex|claude|dsh] [--refresh]');
+  if (positionals.length > 1) throw new UsageError('models [codex|claude|dsh|agy] [--refresh]');
   const request = positionals.length ? { agent: positionals[0] } : {};
   if (values.refresh) request.refresh = true;
   return tool(values.planner, 'relay_models', request);

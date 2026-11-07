@@ -11,7 +11,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import {
-  agentDefault, catalogFor, checkRoute, CLAUDE_ALIASES, listClaudeModels, listCodexModels, modelsCachePath, tomlTopLevel,
+  agentDefault, catalogFor, checkRoute, CLAUDE_ALIASES, listAgyModels, listClaudeModels, listCodexModels, modelsCachePath, parseAgyModels, tomlTopLevel,
 } from '../src/models.mjs';
 import { isAlive } from '../src/store.mjs';
 import { fakeAgent, sleep, tempDir, waitFor } from './helpers.mjs';
@@ -163,7 +163,7 @@ test('fetched lists are cached for a day; refresh fetches again; fetch: false st
     const dsh = await catalogFor('dsh', { env });
     assert.deepEqual(dsh.models, [{ id: 'deepseek-v4-flash', provider: 'opper' }]);
     assert.equal(dsh.choosesModel, false);
-    assert.equal((await catalogFor('agy', { env })).reserved, true);
+    assert.equal((await catalogFor('acp', { env })).reserved, true);
     await assert.rejects(catalogFor('cursor', { env }), err => err.code === 'unknown-agent');
   } finally {
     cleanup();
@@ -216,5 +216,46 @@ test('checking a route: codex against its list, claude by form, dsh never takes 
   assert.equal(dsh.code, 'model-unsupported');
   assert.match(dsh.reason, /its default model is deepseek-v4-flash \(from ~\/\.dsh\/settings\.yaml\)/);
   assert.equal(status({ executor: 'dsh' }, {}), 'agent-default');
-  assert.equal(checkRoute({ executor: 'agy' }, {}).code, 'reserved-executor');
+  assert.equal(checkRoute({ executor: 'acp' }, {}).code, 'reserved-executor');
+});
+
+test('checking an Antigravity route: Gemini slugs against agy models, by form when the list is missing', () => {
+  const agy = { models: parseAgyModels('gemini-4-argon-high   Gemini 4 Argon (High)\ngemini-3.8-flash-medium   Gemini 3.8 Flash (Medium)\n') };
+  const status = (route, catalog) => checkRoute(route, catalog).status;
+  assert.equal(status({ executor: 'agy' }, agy), 'agent-default');
+  assert.equal(status({ executor: 'agy', model: 'gemini-4-argon-high', effort: 'high' }, agy), 'verified');
+  const cliName = checkRoute({ executor: 'agy', model: 'gemini-4-argon' }, agy);
+  assert.equal(cliName.code, 'model-unknown', 'a bare Gemini model name is not an Antigravity slug');
+  assert.deepEqual(cliName.suggestions, ['gemini-4-argon-high']);
+  assert.equal(status({ executor: 'agy', model: 'gemini-4-argon-high' }, { error: { message: 'not on PATH' }, models: [] }), 'format-only');
+  assert.equal(checkRoute({ executor: 'agy', model: 'two words' }, agy).code, 'invalid-value');
+});
+
+test('agy models: slugs and display names from `agy models`; a failing or missing agy gives a coded error', async () => {
+  assert.deepEqual(parseAgyModels('gemini-4-argon-high       Gemini 4 Argon (High)\r\n\r\ngemini-3.1-pro-high\n...\n'), [
+    { id: 'gemini-4-argon-high', model: 'gemini-4-argon-high', displayName: 'Gemini 4 Argon (High)' },
+    { id: 'gemini-3.1-pro-high', model: 'gemini-3.1-pro-high' },
+  ]);
+  // agy 1.5.2 separates the slug and the name with one tab.
+  assert.deepEqual(parseAgyModels('gemini-4-argon-medium\tGemini 4 Argon (Medium)\r\ngemini-3.8-flash-low\tGemini 3.8 Flash (Low)\r\n').map(m => [m.id, m.displayName]), [
+    ['gemini-4-argon-medium', 'Gemini 4 Argon (Medium)'],
+    ['gemini-3.8-flash-low', 'Gemini 3.8 Flash (Low)'],
+  ]);
+  const models = await listAgyModels({ command: fakeAgent(), env: process.env });
+  assert.deepEqual(models.map(m => m.id), ['gemini-4-argon-high', 'gemini-4-argon-medium', 'gemini-3.8-flash-medium']);
+  await assert.rejects(listAgyModels({ command: fakeAgent(), env: { ...process.env, FAKE_AGY_MODELS: 'fail' } }), err => err.code === 'model-list-failed' && /authentication required/.test(err.message));
+  await assert.rejects(listAgyModels({ command: fakeAgent(), env: { ...process.env, FAKE_AGY_MODELS: '[]' } }), err => err.code === 'model-list-failed');
+  await assert.rejects(listAgyModels({ command: 'agenthub-no-such-agy', env: process.env }), err => err.code === 'agent-missing');
+
+  const { env, cleanup } = home();
+  try {
+    const catalog = await catalogFor('agy', { env, config: { executors: { agy: { command: fakeAgent() } } } });
+    assert.equal(catalog.source, 'agy models');
+    assert.equal(catalog.models[0].id, 'gemini-4-argon-high');
+    assert.equal(catalog.default.model, null, 'Antigravity keeps its own default');
+    const cached = await catalogFor('agy', { env, config: { executors: { agy: { command: fakeAgent() } } }, fetch: false });
+    assert.equal(cached.cached, true);
+  } finally {
+    cleanup();
+  }
 });

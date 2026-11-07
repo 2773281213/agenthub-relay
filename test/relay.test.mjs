@@ -255,6 +255,52 @@ describe('worker', () => {
     }
   });
 
+  test('an Antigravity job runs agy in its worktree with a Gemini model, the task on stdin, and records its conversation', async () => {
+    const { dir, cleanup } = makeRepo();
+    const scratch = tempDir();
+    try {
+      useFakeExecutors(dir);
+      const record = path.join(scratch.dir, 'seen.json');
+      const id = await prepareJob(dir, {
+        tier: 'deep',
+        executor: 'agy',
+        model: 'gemini-4-argon-high',
+        scope: ['src/api'],
+        task: fakeTask({
+          write: { 'src/api/agy.txt': 'from antigravity\n' },
+          message: 'added src/api/agy.txt',
+          record,
+          envNames: ['AGY_CLI_DISABLE_AUTO_UPDATE'],
+        }),
+      });
+      const job = await runWorker({ root: dir, jobId: id, env: process.env });
+      assert.equal(job.status, 'completed');
+      assert.equal(job.verification, 'unverified');
+      assert.deepEqual(job.changedFiles, ['src/api/agy.txt']);
+      assert.deepEqual(job.outOfScope, []);
+      assert.equal(job.summary, 'added src/api/agy.txt');
+      assert.equal(job.executorRun.sessionId, 'fake-conversation');
+
+      const seen = JSON.parse(fs.readFileSync(record, 'utf8'));
+      assert.equal(seen.mode, 'agy');
+      assert.deepEqual(seen.args, ['--input-format', 'stream-json', '--output-format', 'stream-json', '--mode', 'accept-edits', '--model', 'gemini-4-argon-high']);
+      assert.deepEqual(seen.present, { AGY_CLI_DISABLE_AUTO_UPDATE: true });
+      assert.equal(seen.role, 'executor');
+      assert.equal(fs.realpathSync(seen.cwd), path.join(dir, '.agenthub', 'worktrees', id));
+      assert.match(seen.prompt, /scope: src\/api/);
+      assert.equal(fs.existsSync(path.join(dir, 'src/api/agy.txt')), false, 'main tree untouched');
+
+      const failed = await prepareJob(dir, { tier: 'review', executor: 'agy', task: fakeTask({ fail: true }) });
+      const failedJob = await runWorker({ root: dir, jobId: failed, env: process.env });
+      assert.equal(failedJob.status, 'failed');
+      assert.equal(failedJob.error.code, 'executor-failed');
+      assert.match(failedJob.executorRun.error, /ERROR: fake agy failure/);
+    } finally {
+      scratch.cleanup();
+      cleanup();
+    }
+  });
+
   test('a failing check fails the job; a failing executor leaves the checks not run', async () => {
     const { dir, cleanup } = makeRepo();
     try {
@@ -462,7 +508,7 @@ describe('relay tools (real worker processes)', () => {
         err => err.code === 'scope-conflict' && err.details.job === long.jobId,
       );
       await assert.rejects(relay.call('relay_dispatch', { tier: 'light', scope: ['docs/x.md'], task: 'x' }), err => err.code === 'light-needs-checks');
-      await assert.rejects(relay.call('relay_dispatch', { tier: 'review', executor: 'agy', task: 'x' }), err => err.code === 'reserved-executor');
+      await assert.rejects(relay.call('relay_dispatch', { tier: 'review', executor: 'acp', task: 'x' }), err => err.code === 'reserved-executor');
       const worktrees = fs.readdirSync(path.join(dir, '.agenthub/worktrees'));
       assert.deepEqual(worktrees, [long.jobId], 'refused dispatches create no worktree');
 

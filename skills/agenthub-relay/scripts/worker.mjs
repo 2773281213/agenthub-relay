@@ -118,7 +118,7 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
     const run = await runProcess({
       argv: launch.argv,
       cwd: worktree,
-      env: { ...executorEnv, ...launch.env },
+      env: { ...executorEnv, ...launch.env, ...(invocation.env ?? {}) },
       stdin: invocation.stdin,
       timeoutMs: job.timeoutMinutes * 60_000,
       logFile: files.executorLog,

@@ -17,7 +17,7 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 
 ## 3. 角色模型
 
-规划者和执行者不固定。任何能加载 MCP 服务的 agent 都可以当规划者：Claude Code、Codex、DeepSeek Harness、Antigravity。执行者由档位映射决定，v0.1 实现 Claude Code、Codex、DeepSeek Harness 三家，Antigravity 只在配置里预留。
+规划者和执行者不固定。任何能加载 MCP 服务的 agent 都可以当规划者：Claude Code、Codex、DeepSeek Harness、Antigravity。执行者由档位映射决定：Claude Code、Codex、DeepSeek Harness 和 Antigravity（`agy`，即 Antigravity CLI）；通用 ACP 只在配置里预留。Gemini 模型只经 Antigravity 接入，不走 Gemini CLI。
 
 档位（tier）描述任务性质，不描述代理：
 
@@ -37,12 +37,12 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 | dispatch-policy | 档位映射、light 档护栏、并发写范围冲突锁、预留代理失败关闭、执行者禁止再派发 | `src/policy.mjs` `src/config.mjs` |
 | job-store | 任务记录与状态机、事件日志、原子写、心跳存活检测 | `src/store.mjs` |
 | git-isolation | 每个任务一个 git worktree、基线提交、变更清单、越界审计、补丁应用与丢弃 | `src/git.mjs` |
-| executor-adapters | 三家执行者的命令构造与输出解析，agy 与 ACP 预留 | `src/executors.mjs` |
+| executor-adapters | 四家执行者（codex、claude、dsh、agy）的命令构造与输出解析，ACP 预留 | `src/executors.mjs` |
 | worker-runner | 分离进程中的 worker：超时与取消、运行检查、收尾 | `src/worker.mjs` `src/checks.mjs` |
 | claude-planner-mod | Claude Code 规划者专用 mod：保活、任务结束唤醒、`/relay` 命令、状态行 | `hooks/` `types/` `.claude-plugin/` `.mcp.json` |
 | relay-skill | 可移植的路由手册（Agent Skills 标准），教规划者拆分、选档、写任务、等待和验收 | `skills/agenthub-relay/SKILL.md` |
 
-外部模块：planner-hosts（任一 MCP 客户端规划者）、executor-clis（codex、claude、dsh；agy 预留）、anthropic-cache（Claude 主会话提示缓存）。
+外部模块：planner-hosts（任一 MCP 客户端规划者）、executor-clis（codex、claude、dsh、agy；ACP 预留）、anthropic-cache（Claude 主会话提示缓存）。
 
 ## 5. 关系
 
@@ -82,7 +82,7 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 | codex | `codex exec --json --sandbox workspace-write -o <最终消息文件> -`，任务从 stdin 传入 | JSONL 事件，最终消息写入文件 |
 | claude | `claude -p --output-format json --permission-mode acceptEdits --permission-prompts none`，检查命令加入 `--allowedTools` | JSON 中的 `result` 与用量 |
 | dsh | `dsh --profile headless "<任务>"` | stdout 为最后一条回答，完成退出码 0，否则 1 |
-| agy | 预留，派发时报错 | — |
+| agy | `agy --input-format stream-json --output-format stream-json`，任务作为一条 `{"event":"user","message":{"content":…}}` 从 stdin 传入；写档位加 `--mode accept-edits`，检查命令经 `--settings` 的 `permissions.allow`（`command(<检查>)`）放行；review 经 `--settings` 拒绝 `write_file(*)` 与 `command(*)`，因为 agy 默认模式下也会写工作区。`--settings` 只作用于这一次运行，不改用户的 settings.json。headless 下被拒绝的动作会直接结束这一轮，`response` 可能为空，此时摘要写明 `denied_actions`；模型用 `--model <slug>`，slug 来自 `agy models`（如 `gemini-4-argon-high`）；子进程设 `AGY_CLI_DISABLE_AUTO_UPDATE=true` | NDJSON 事件；最后的 `result` 事件给出 `status`、`response`、`conversation_id` 与 `usage`，`status` 不是 `SUCCESS` 或退出码非 0 即失败 |
 
 执行者只继承 PATH、HOME、语言设置和配置里列出的变量名；密钥值不进入任何记录。
 
@@ -106,7 +106,6 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 ## 11. 路线图
 
 - 之后：通用 ACP 执行器（Claude 经 `claude-agent-acp`、Codex 经 `codex-acp`、dsh 原生 `--profile acp`、agy 官方 ACP server），之后可把 Paseo、bb、Lody 作为可选后端。
-- Antigravity headless 适配器（`agy -p --output-format json`）。
 
 ## 12. 实现与设计的差异（v0.1）
 

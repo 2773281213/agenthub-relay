@@ -1,6 +1,6 @@
 ---
 name: agenthub-relay
-description: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness) with the bundled relay script or the relay_* MCP tools - confirm with the user which agent and model takes each tier for this planner session, split the work, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.
+description: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness, Antigravity) with the bundled relay script or the relay_* MCP tools - confirm with the user which agent and model takes each tier for this planner session, split the work, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.
 when_to_use: Use when the user wants coding work delegated, split or run in parallel across agents, or names an agent or model for part of it, for example "let Codex implement this", "give the mechanical edits to DeepSeek", "have Claude Code take the hard part", "split this up and run it in parallel", "get a second opinion from Codex on this diff", "use opus for the deep tier", "交给 codex 做", "让 dsh 改这几个文件", "分给几个 agent 并行做", "简单的部分用便宜的模型", "让 Claude Code 复核一下", "这次谁来执行、用什么模型". Also use it when a large task has independent, well-specified pieces another agent can do in parallel or more cheaply, when the user mentions agenthub-relay or relay jobs, and to check, apply or discard jobs already dispatched. Not for architecture reviews (birdview-review), skill audits (birdview-compatibility), edits faster to make yourself, work that still needs back-and-forth design, or when you run as an agenthub-relay executor.
 ---
 
@@ -25,7 +25,7 @@ If the `relay_*` MCP tools are loaded (the Claude Code plugin loads them), you m
 | Command | Tool |
 |---|---|
 | `session start`, `session confirm <id> (--reuse \| --deep/--light/--review <route>) [--user]`, `session show` | `relay_session` |
-| `models [codex\|claude\|dsh]`, `models check <agent> [<model>] [--effort <e>]` | `relay_models` |
+| `models [codex\|claude\|dsh\|agy]`, `models check <agent> [<model>] [--effort <e>]` | `relay_models` |
 | `agents` | `relay_agents` |
 | `dispatch --session <id> --tier <t> --task-file - [--scope <p>]... [--check <c>]... [--executor <id>] [--model <m>] [--effort <e>] [--title <s>] [--acceptance <s>]` (task on stdin) | `relay_dispatch` |
 | `wait [<id>...] [--timeout <s>]` | `relay_wait` |
@@ -48,6 +48,7 @@ Dispatch works only inside a planner session the user confirmed (`session-requir
 Other rules:
 
 - DeepSeek Harness uses its own settings: the relay shows its default model but gives it none, and refuses a model for it with `model-unsupported`. If the user wants another dsh model, they change it in DeepSeek Harness.
+- Gemini models run only through Antigravity (`agy`, the Antigravity CLI), never Gemini CLI. Give the slug `models agy` lists, such as `agy:gemini-4-argon-high`; a bare Gemini name like `gemini-4-argon` is refused with suggestions.
 - When the user names an executor, model or effort for one piece of work ("give this to Claude Opus"), pass `--executor`, `--model` and `--effort` on that dispatch only; they are checked the same way.
 - `planner-mismatch` means the session belongs to another planner: start your own session instead of reusing someone else's id.
 - You cannot change your own model from here; the relay only reads it. If the user wants a different planner model, point them to their host (in Claude Code, `/model`).
