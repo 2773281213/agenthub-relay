@@ -109,7 +109,9 @@ test('install-skills installs, keeps a current copy, reports a changed one, and 
 
     const forced = installSkills({ source, targets: { claude: targets.claude }, version: '9.9.10', now, force: true })[0];
     assert.equal(forced.status, 'updated');
-    assert.equal(fs.readFileSync(path.join(forced.backup, 'scripts', 'cli.mjs'), 'utf8'), '// my local fix\n', 'the changed copy is kept beside it');
+    assert.equal(fs.readFileSync(path.join(forced.backup, 'scripts', 'cli.mjs'), 'utf8'), '// my local fix\n', 'the changed copy is kept');
+    assert.equal(path.dirname(forced.backup), path.join(dir, 'claude-skills-backups'), 'outside the skills folder, where no agent loads it as a skill');
+    assert.deepEqual(fs.readdirSync(targets.claude).sort(), [...SKILL_NAMES].sort());
     assert.equal(fs.readFileSync(path.join(installed, 'scripts', 'cli.mjs'), 'utf8'), '// newer\n');
 
     // Untouched copies are updated without force.

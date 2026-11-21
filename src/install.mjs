@@ -156,7 +156,9 @@ function installOne(skill, from, to, { force, dryRun, version, now, released }) 
   if (dryRun) return { status: changed.length ? 'would-replace' : 'would-update', ...(changed.length ? { changed } : {}) };
   let backup;
   if (changed.length) {
-    backup = `${to}.bak-${stamp(now)}`;
+    // Beside the skills folder, not in it: agents load every folder in there as a skill.
+    const skillsDir = path.dirname(to);
+    backup = path.join(path.dirname(skillsDir), `${path.basename(skillsDir)}-backups`, `${skill}-${stamp(now)}`);
     copyTree(to, backup);
   }
   for (const file of presentFiles) {

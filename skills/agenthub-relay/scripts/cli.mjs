@@ -70,7 +70,8 @@ Other:
   agenthub-relay doctor [--json]             Check the repository, settings and installed executors
   agenthub-relay install-skills [--to claude|agents|all] [--force] [--dry-run]
                  Install or update the skill copies in ~/.claude/skills and ~/.agents/skills;
-                 a copy someone changed is reported, and replaced only with --force (after a backup)
+                 a copy someone changed is reported, and replaced only with --force (after a backup
+                 to <skills folder>-backups)
   agenthub-relay worker <jobId>              Run one job (dispatch starts this for you)
   agenthub-relay --version
 
