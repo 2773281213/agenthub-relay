@@ -40,6 +40,21 @@ function refused(fn, code) {
   assert.throws(fn, err => err instanceof PolicyError && err.code === code, `expected ${code}`);
 }
 
+test('sessions.mentionReuse is off by default, settable, and only a boolean', () => {
+  const { dir, cleanup } = tempDir();
+  try {
+    assert.equal(loadConfig({ env: {} }).sessions.mentionReuse, false);
+    fs.mkdirSync(path.join(dir, '.agenthub'));
+    fs.writeFileSync(path.join(dir, '.agenthub', 'config.json'), JSON.stringify({ sessions: { mentionReuse: true } }));
+    assert.equal(loadConfig({ root: dir, env: {} }).sessions.mentionReuse, true);
+    assert.equal(loadConfig({ root: dir, env: {} }).sessions.required, true, 'the other setting keeps its default');
+    fs.writeFileSync(path.join(dir, '.agenthub', 'config.json'), JSON.stringify({ sessions: { mentionReuse: 'yes' } }));
+    assert.throws(() => loadConfig({ root: dir, env: {} }), err => err.code === 'config-invalid');
+  } finally {
+    cleanup();
+  }
+});
+
 test('a finished job takes another turn through queued; apply and discard may reserve it first', () => {
   const done = job({ status: 'completed' });
   assert.doesNotThrow(() => checkTransition(done, { ...done, status: 'queued' }));

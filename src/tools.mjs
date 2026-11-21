@@ -26,7 +26,7 @@ import {
   createStore, isAbandonedReservation, isAlive, isJobId, LIVE, newJobId, RESERVATIONS, TERMINAL, turnNumber, turnsOf,
 } from './store.mjs';
 
-export const VERSION = '0.5.0';
+export const VERSION = '0.5.1';
 export const MAX_WAIT_SECONDS = 50;
 /** A watcher counts as active while it polled this recently. */
 export const WATCHER_ACTIVE_MS = 3 * 60_000;
@@ -760,6 +760,7 @@ export function createRelay({
         routes: settings.routes,
         configFiles: settings.sources,
         sessionsRequired: settings.sessions.required,
+        mentionReuse: settings.sessions.mentionReuse,
         session: sessionSummary(currentSession(r)),
         tiers: {
           deep: 'Complex or multi-file work; scope required.',

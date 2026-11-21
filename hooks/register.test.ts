@@ -6,12 +6,12 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { decide } from './register'
+import { decide, mentionContext, mentionRows, mentionsIn } from './register'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
 
-type Job = { id: string; status: string; integration?: string; resultFetched?: boolean; title?: string; tier?: string; executor?: string; turn?: number; takenOver?: boolean }
+type Job = { id: string; status: string; integration?: string; resultFetched?: boolean; title?: string; tier?: string; executor?: string; turn?: number; takenOver?: boolean; resumable?: boolean }
 type Fork = { read: number; wrote: number }
 
 /** A session with the relay stubbed; `jobs` and `forkReply` can change between steps. */
@@ -23,11 +23,31 @@ function world($: Engine, on: On, env: Record<string, string> = {}) {
     forks: 0,
     forkReply: { read: 90_000, wrote: 0 } as Fork,
     prompts: [] as string[],
+    contexts: [] as string[][],
     statuses: [] as (string | undefined)[],
     toasts: [] as string[],
     commands: [] as string[],
     mcpCalls: 0,
+    tools: [] as string[],
+    executors: [
+      { id: 'codex', label: 'Codex CLI', available: true, tiers: ['deep'], agentDefault: { model: 'gpt-6-astra' } },
+      { id: 'claude', label: 'Claude Code', available: true, tiers: ['review'] },
+      { id: 'dsh', label: 'DeepSeek Harness', available: false, tiers: ['light'] },
+      { id: 'agy', label: 'Antigravity CLI', available: true, tiers: [] },
+    ],
+    mentionReuse: false,
+    takeoverReply: {} as unknown,
+    copied: [] as string[],
+    opened: [] as string[],
   }
+  on('ui.copy', (_, e) => {
+    seen.copied.push(e.text)
+    return { value: { isCopied: true } }
+  })
+  on('ui.open', (_, e) => {
+    seen.opened.push(e.id)
+    return { value: { isPlaced: true } }
+  })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', (_, e) => {
     seen.commands.push(e.name)
@@ -36,9 +56,14 @@ function world($: Engine, on: On, env: Record<string, string> = {}) {
   on('mcp.connect', () => ({ value: { isConnected: true, server: 'plugin:agenthub-relay:relay' } }))
   on('mcp.call', (_, e) => {
     seen.mcpCalls += 1
+    seen.tools.push(e.tool)
+    const reply = (body: unknown, isError = false) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError } })
+    if (e.tool === 'relay_agents') return reply({ executors: seen.executors, mentionReuse: seen.mentionReuse })
+    if (e.tool === 'relay_takeover') return reply(seen.takeoverReply)
+    if (e.tool === 'relay_collect') return reply({ jobId: (e.args as { jobId: string }).jobId, turn: 2, status: 'queued' })
     expect(e.tool).toBe('relay_status')
     expect(e.args).toEqual({ watch: true })
-    return { value: { content: [{ type: 'text', text: JSON.stringify({ jobs: seen.jobs }) }], isError: false } }
+    return reply({ jobs: seen.jobs })
   })
   on('model.fork', () => {
     seen.forks += 1
@@ -47,7 +72,8 @@ function world($: Engine, on: On, env: Record<string, string> = {}) {
   })
   on('prompt.submit', (_, e) => {
     seen.prompts.push(e.text)
-    return { text: e.text }
+    seen.contexts.push([...(e.context ?? [])])
+    return { text: e.text, ...(e.context ? { context: e.context } : {}) }
   })
   on('ui.status', (_, e) => {
     seen.statuses.push(e.text)
@@ -206,6 +232,72 @@ test('a follow-up turn of the same job wakes the session again; a taken-over job
   await w.minutes(2)
   expect(w.seen.prompts.length).toBe(2)
   expect(w.seen.prompts[1]).toContain('j1 (codex, deep) ended completed (turn 2)')
+})
+
+test('mentions: #executor in prose, not in code; the note asks for a dispatch and how to confirm a session', () => {
+  expect(mentionsIn('#codex fix the flaky test')).toEqual(['codex'])
+  expect(mentionsIn('让 #dsh 改一下，再让 #codex 审，#dsh 不要动 README')).toEqual(['dsh', 'codex'])
+  expect(mentionsIn('see `#codex` and ```\n#agy\n``` and issue #123 and a#claude')).toEqual([])
+  expect(mentionsIn('#codexy and #CLAUDE')).toEqual(['claude'])
+  const ask = mentionContext(['codex'], false)
+  expect(ask).toContain('relay_dispatch with executor "codex"')
+  expect(ask).toContain('ask the user in one line')
+  expect(mentionContext(['codex', 'agy'], true)).toContain('confirm it with reuse: true')
+  const rows = mentionRows('#c', [{ id: 'codex', label: 'Codex CLI', available: true, tiers: ['deep'], agentDefault: { model: 'gpt-6-astra' } }])
+  expect(rows.map(row => row.text)).toEqual(['#codex', '#claude'])
+  expect(rows[0].description).toBe('agenthub-relay: Codex CLI · tiers deep · gpt-6-astra')
+})
+
+test('typing # offers the executors; a prompt that mentions one carries a note only the model reads', async ($, on) => {
+  const w = world($, on)
+  on('prompt.autocomplete', () => ({ suggestions: [{ text: '#123' }] }))
+  await w.start()
+  await w.minutes(1)
+  const offered = await $.prompt.autocomplete({ text: 'please #d', cursor: 9, token: '#d', start: 7 })
+  expect(offered.suggestions.map(row => row.text)).toEqual(['#123', '#dsh'])
+  expect(offered.suggestions[1].description).toContain('not installed')
+
+  await $.prompt.submit({ text: '#codex fix the flaky test', wait: false })
+  expect(w.seen.prompts.at(-1)).toBe('#codex fix the flaky test')
+  expect(w.seen.contexts.at(-1)?.[0]).toContain('[agenthub-relay] The user mentioned #codex')
+  await $.prompt.submit({ text: 'no mention here', wait: false })
+  expect(w.seen.contexts.at(-1)).toEqual([])
+  w.seen.mentionReuse = true
+  await w.minutes(11)
+  await $.prompt.submit({ text: 'ask #agy', wait: false })
+  expect(w.seen.contexts.at(-1)?.[0]).toContain('reuse: true')
+})
+
+test('/relay jobs opens a pane whose Open takes the job over in its app and copies the terminal command', async ($, on) => {
+  const w = world($, on)
+  w.seen.jobs = [
+    { id: 'j1', status: 'completed', integration: 'none', title: 'refactor', tier: 'deep', executor: 'claude', turn: 1, resumable: true } as Job,
+    { id: 'j2', status: 'failed', integration: 'none', title: 'by hand', tier: 'deep', executor: 'codex', turn: 1, resumable: true, takenOver: true } as Job,
+    { id: 'j3', status: 'completed', integration: 'applied', title: 'done', executor: 'dsh' } as Job,
+  ]
+  w.seen.takeoverReply = { jobId: 'j1', app: { label: 'Claude desktop app' }, terminal: { command: 'claude --resume u-1', cwd: '/w' }, opened: { ok: true } }
+  await w.start()
+  const presentation = { isFullscreen: false, columns: 100 }
+  const shown = await $.command.run({ command: 'relay', args: 'jobs', origin: { kind: 'composer' }, presentation })
+  expect(shown.text).toContain('jobs pane is open')
+  expect(w.seen.opened).toEqual(['relay-jobs'])
+  const ui = await $.ui.mount({
+    plugin: 'agenthub-relay',
+    component: 'Pane',
+    requestId: 'relay-jobs',
+    surface: 'desktop',
+    props: { title: 'Relay jobs', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
+  })
+  expect((await ui.find({ type: 'Text', text: /refactor/ }))?.text).toBe('refactor')
+  expect(await ui.find({ type: 'Text', text: /done/ })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /j2 .*taken over/ }))?.text).toContain('codex')
+  await ui.press({ key: 'open-j1' })
+  expect(w.seen.tools).toContain('relay_takeover')
+  expect(w.seen.copied).toEqual(['claude --resume u-1'])
+  expect(w.seen.toasts.at(-1)).toContain('opened in the Claude desktop app')
+  await ui.press({ key: 'back-j2' })
+  expect(w.seen.tools).toContain('relay_collect')
+  await ui.unmount()
 })
 
 test('an executor process stays inactive: no command, no polling, no fork', async ($, on) => {

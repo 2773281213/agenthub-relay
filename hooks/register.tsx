@@ -6,13 +6,61 @@
 //   serves (and refreshes) the cached prefix; it adds no turn to the transcript.
 // - Wake: when a job this session watched ends and nobody read its result,
 //   submit one prompt so Claude reviews it.
-// - /relay and a status line show jobs and keep-alive state.
+// - /relay and a status line show jobs and keep-alive state; /relay jobs opens
+//   a pane of the jobs waiting on you, with Open (take the job over in its
+//   executor's own app), Review and Hand back.
+// - In-app invocation: typing # offers the relay's executors (#codex, #claude,
+//   #dsh, #agy), and a prompt that mentions one gets a note, which only the
+//   model reads, to hand the request to that executor through the relay.
 // Nothing runs in an executor process (AGENTHUB_RELAY_ROLE=executor).
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { RelayKeepAlive } from '../types'
+import type { RelayKeepAlive, RelayPaneJob } from '../types'
+
+/** The executors a prompt can mention with #. */
+export const MENTIONABLE = ['codex', 'claude', 'dsh', 'agy'] as const
+const PANE = 'relay-jobs'
+
+export type RelayExecutor = { id: string; label?: string; available?: boolean; tiers?: string[]; model?: string; agentDefault?: { model?: string } }
+
+/** The executors a prompt mentions as #id, outside code spans and fences, in order, once each. */
+export function mentionsIn(text: string): string[] {
+  const prose = text.replace(/```[\s\S]*?(```|$)/g, ' ').replace(/`[^`\n]*`/g, ' ')
+  const found: string[] = []
+  for (const match of prose.matchAll(/(?:^|[\s(（，,。.;；:：!！?？])#([a-z]+)(?![\w-])/gi)) {
+    const id = match[1].toLowerCase()
+    if ((MENTIONABLE as readonly string[]).includes(id) && !found.includes(id)) found.push(id)
+  }
+  return found
+}
+
+/** What the model reads beside a prompt that mentions executors (the user never sees it). */
+export function mentionContext(ids: string[], mentionReuse: boolean): string {
+  const named = ids.map(id => `#${id} (the relay's ${id} executor)`).join(', ')
+  const session = mentionReuse
+    ? 'If relay_session shows no confirmed planner session, the mention itself means keeping the saved roles: start one and confirm it with reuse: true, and tell the user you did.'
+    : 'If relay_session shows no confirmed planner session, start one and ask the user in one line whether to keep the saved roles before confirming.'
+  return [
+    `[agenthub-relay] The user mentioned ${named}.`,
+    `Hand this request to ${ids.length > 1 ? 'each mentioned executor' : 'that executor'} through agenthub-relay instead of doing it yourself:`,
+    `write a self-contained task and call relay_dispatch with executor ${ids.map(id => `"${id}"`).join(' / ')}${ids.length > 1 ? ', one job per executor' : ''}, then end your turn or wait as the result says.`,
+    session,
+  ].join(' ')
+}
+
+/** The typeahead rows for a token starting with #: the relay's executors that match it. */
+export function mentionRows(token: string, executors: RelayExecutor[]): { text: string; label: string; description: string }[] {
+  const typed = token.slice(1).toLowerCase()
+  const known = new Map(executors.map(entry => [entry.id, entry]))
+  return MENTIONABLE.filter(id => id.startsWith(typed)).map(id => {
+    const entry = known.get(id)
+    const model = entry?.model ?? entry?.agentDefault?.model
+    const parts = [entry?.label ?? id, entry?.tiers?.length ? `tiers ${entry.tiers.join('/')}` : null, model ?? null, entry && entry.available === false ? 'not installed' : null]
+    return { text: `#${id}`, label: `#${id}`, description: `agenthub-relay: ${parts.filter(Boolean).join(' · ')}` }
+  })
+}
 
 const MINUTE = 60_000
 /** The one-hour cache lifetime, counted from the start of a request that reads or writes it. */
@@ -34,6 +82,8 @@ export type RelayJob = {
   /** The job's latest turn (relay_send and relay_collect add turns); 1 when absent. */
   turn?: number
   takenOver?: boolean
+  resumable?: boolean
+  model?: string
 }
 
 /** One turn of one job: a follow-up turn wakes the session again. */
@@ -103,6 +153,31 @@ const INITIAL: RelayKeepAlive = {
 
 // Change the tag when the fields change: an older stored value is then read as INITIAL.
 const keepAlive = atom({ plugin: 'agenthub-relay', key: 'keepAlive' } as const, INITIAL, { shape: 'keep-alive-2' })
+/** The jobs the pane draws, refreshed by the minute tick. */
+const paneJobs = atom({ plugin: 'agenthub-relay', key: 'jobs' } as const, [] as RelayPaneJob[], { shape: 'jobs-1' })
+
+function paneJob(job: RelayJob): RelayPaneJob {
+  return {
+    id: job.id,
+    title: job.title ?? job.id,
+    tier: job.tier ?? '?',
+    executor: job.executor ?? '?',
+    model: job.model ?? null,
+    status: job.status,
+    integration: job.integration ?? 'none',
+    verification: job.verification ?? null,
+    turn: job.turn ?? 1,
+    takenOver: job.takenOver === true,
+    resumable: job.resumable === true,
+  }
+}
+
+function jobState(job: RelayPaneJob): string {
+  const turn = job.turn > 1 ? `, turn ${job.turn}` : ''
+  if (job.takenOver) return `taken over${turn}`
+  if (LIVE.has(job.status)) return `${job.status}${turn}`
+  return `${job.status}${job.verification ? `/${job.verification}` : ''}${turn}`
+}
 
 function bounded(value: unknown, fallback: number, min: number, max: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback
@@ -143,21 +218,91 @@ type Runtime = {
   ticking: boolean
   server: string | undefined
   lastJobs: RelayJob[]
+  executors: RelayExecutor[]
+  mentionReuse: boolean
+  agentsAt: number | null
 }
 
-async function pollJobs($: EngineInterface, rt: Runtime): Promise<RelayJob[] | undefined> {
+async function connect($: EngineInterface, rt: Runtime): Promise<string | undefined> {
   if (rt.server === undefined) {
     const connected = await $.mcp.connect('relay')
     if (!connected.isConnected) return undefined
     rt.server = connected.server
   }
-  const result = await $.mcp.call(rt.server, 'relay_status', { watch: true })
-  if (result.isError) return undefined
+  return rt.server
+}
+
+type Called = { ok: true; value: Record<string, unknown> } | { ok: false; message: string }
+
+/** One relay_* tool call: its JSON result, or the relay's error message. */
+async function callRelay($: EngineInterface, rt: Runtime, tool: string, args: Record<string, unknown>): Promise<Called> {
+  const server = await connect($, rt)
+  if (server === undefined) return { ok: false, message: 'the agenthub-relay MCP server is not connected' }
+  const result = await $.mcp.call(server, tool, args)
   const text = result.content.find(block => block.type === 'text')?.text
-  if (text === undefined) return undefined
-  const parsed: unknown = JSON.parse(text)
-  const jobs = (parsed as { jobs?: unknown }).jobs
+  let value: Record<string, unknown> = {}
+  try {
+    value = text === undefined ? {} : (JSON.parse(text) as Record<string, unknown>)
+  } catch {
+    value = {}
+  }
+  if (result.isError) {
+    const error = value.error as { message?: string } | undefined
+    return { ok: false, message: error?.message ?? text ?? 'the relay refused' }
+  }
+  return { ok: true, value }
+}
+
+async function pollJobs($: EngineInterface, rt: Runtime): Promise<RelayJob[] | undefined> {
+  const called = await callRelay($, rt, 'relay_status', { watch: true })
+  if (!called.ok) return undefined
+  const jobs = called.value.jobs
   return Array.isArray(jobs) ? (jobs as RelayJob[]) : undefined
+}
+
+/** The executors and the mention setting, for the # typeahead and the mention note. */
+async function refreshAgents($: EngineInterface, rt: Runtime, now: number): Promise<void> {
+  if (rt.agentsAt !== null && now - rt.agentsAt < 10 * MINUTE) return
+  rt.agentsAt = now
+  const called = await callRelay($, rt, 'relay_agents', {})
+  if (!called.ok) return
+  if (Array.isArray(called.value.executors)) rt.executors = called.value.executors as RelayExecutor[]
+  rt.mentionReuse = called.value.mentionReuse === true
+}
+
+/** The pane's Open: take the job over and open it in its executor's own app; the terminal command goes to the clipboard. */
+async function openJob($: EngineInterface, rt: Runtime, job: RelayPaneJob, surface: unknown): Promise<void> {
+  const called = await callRelay($, rt, 'relay_takeover', { jobId: job.id, open: true, ...(LIVE.has(job.status) ? { stop: true } : {}) })
+  if (!called.ok) {
+    $.ui.toast(`agenthub-relay: ${job.id} was not opened: ${called.message}`)
+    return
+  }
+  const app = called.value.app as { label?: string } | undefined
+  const terminal = called.value.terminal as { command?: string; cwd?: string } | undefined
+  const opened = called.value.opened as { ok?: boolean; error?: string } | undefined
+  if (terminal?.command) await $.ui.copy({ text: terminal.command, ...(surface ? { surface } : {}) } as Parameters<typeof $.ui.copy>[0])
+  const where = opened?.ok ? `opened in the ${app?.label ?? 'app'}` : `run it in a terminal in ${terminal?.cwd ?? 'its worktree'}`
+  $.ui.toast(`agenthub-relay: ${job.id} is yours now (${where}; the terminal command is on the clipboard). Hand it back from the jobs pane when you are done.`)
+  await refreshPane($, rt)
+}
+
+async function handBack($: EngineInterface, rt: Runtime, job: RelayPaneJob): Promise<void> {
+  const called = await callRelay($, rt, 'relay_collect', { jobId: job.id })
+  $.ui.toast(called.ok ? `agenthub-relay: ${job.id} is handed back; its checks are running.` : `agenthub-relay: ${job.id} was not handed back: ${called.message}`)
+  await refreshPane($, rt)
+}
+
+async function refreshPane($: EngineInterface, rt: Runtime): Promise<void> {
+  const jobs = await pollJobs($, rt)
+  if (jobs === undefined) return
+  rt.lastJobs = jobs
+  await setPaneJobs($, jobs)
+}
+
+async function setPaneJobs($: EngineInterface, jobs: RelayJob[]): Promise<void> {
+  const next = jobs.filter(job => (job.integration ?? 'none') === 'none').map(paneJob)
+  const current = await read($, paneJobs)
+  if (JSON.stringify(current) !== JSON.stringify(next)) await update($, paneJobs, () => next)
 }
 
 async function forkNow($: EngineInterface, rt: Runtime, at: number): Promise<void> {
@@ -220,8 +365,10 @@ async function tick($: EngineInterface, rt: Runtime): Promise<void> {
     const now = await $.clock.now()
     const jobs = await pollJobs($, rt)
     let state = await read($, keepAlive)
+    await refreshAgents($, rt, now)
     if (jobs !== undefined) {
       rt.lastJobs = jobs
+      await setPaneJobs($, jobs)
       const live = jobs.filter(job => LIVE.has(job.status)).map(turnKey)
       const ended = jobs.filter(
         job =>
@@ -293,6 +440,9 @@ export const register: Register = (on, options) => {
     ticking: false,
     server: undefined,
     lastJobs: [],
+    executors: [],
+    mentionReuse: false,
+    agentsAt: null,
   }
 
   on('session.start', async ($, e, next) => {
@@ -301,8 +451,8 @@ export const register: Register = (on, options) => {
     rt.inactive = false
     await $.command.register({
       name: 'relay',
-      description: 'agenthub-relay jobs and prompt-cache keep-alive',
-      argumentHint: '[on|off]',
+      description: 'agenthub-relay jobs and prompt-cache keep-alive; /relay jobs opens the jobs pane',
+      argumentHint: '[jobs|on|off]',
     })
     $.clock.every(MINUTE, () => {
       tick($, rt).catch(() => {})
@@ -342,5 +492,65 @@ export const register: Register = (on, options) => {
     return result
   }).catch(($, e, next) => next(e)) // replays what the compaction settled to; never runs it twice
 
-  on('command.run', { command: 'relay' }, async ($, e) => ({ text: await summary($, rt, e.args.trim()) }))
+  on('command.run', { command: 'relay' }, async ($, e) => {
+    const arg = e.args.trim()
+    if (arg === 'jobs' && !rt.inactive) {
+      await refreshPane($, rt)
+      await $.ui.open({ id: PANE, title: 'Relay jobs' })
+      return { text: 'agenthub-relay: the jobs pane is open.' }
+    }
+    return { text: await summary($, rt, arg) }
+  })
+
+  // In-app invocation, as in codex-host: # offers the relay's executors...
+  on('prompt.autocomplete', { token: /^#/ }, async ($, e, next) => {
+    const engine = await next(e)
+    if (rt.inactive) return engine
+    return { suggestions: [...engine.suggestions, ...mentionRows(e.token, rt.executors)] }
+  })
+
+  // ...and a prompt that mentions one tells the model to hand it over. The
+  // text stays as typed; the note is context only the model reads.
+  on('prompt.submit', async ($, e, next) => {
+    if (rt.inactive || e.command !== undefined || e.isMeta) return next(e)
+    const ids = mentionsIn(e.text)
+    if (ids.length === 0) return next(e)
+    return next({ ...e, context: [...(e.context ?? []), mentionContext(ids, rt.mentionReuse)] })
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const jobs = await read($, paneJobs)
+    if (e.props.placement === 'widget') {
+      const live = jobs.filter(job => LIVE.has(job.status)).length
+      return <Text>{`relay: ${live} running, ${jobs.length - live} waiting`}</Text>
+    }
+    if (jobs.length === 0) return <Text dimColor>No relay jobs are waiting on you.</Text>
+    return (
+      <Box flexDirection="column">
+        {jobs.map(job => (
+          <Box key={job.id} flexDirection="column" marginBottom={1}>
+            <Text>{job.title}</Text>
+            <Text dimColor>{`${job.id} · ${job.tier} → ${job.executor}${job.model ? `:${job.model}` : ''} · ${jobState(job)}`}</Text>
+            <Box flexDirection="row">
+              {job.resumable && !job.takenOver && (
+                <Button key={`open-${job.id}`} onPress={() => openJob($, rt, job, e.surface)}>
+                  {LIVE.has(job.status) ? 'Stop and open' : 'Open'}
+                </Button>
+              )}
+              {job.takenOver ? (
+                <Button key={`back-${job.id}`} onPress={() => handBack($, rt, job)}>Hand back</Button>
+              ) : (
+                !LIVE.has(job.status) && (
+                  <Button key={`review-${job.id}`} onPress={() => $.prompt.submit({ text: `Review relay job ${job.id} with relay_result, then apply it, send its session what to change with relay_send, or discard it.` })}>
+                    Review
+                  </Button>
+                )
+              )}
+            </Box>
+          </Box>
+        ))}
+      </Box>
+    )
+  })
 }

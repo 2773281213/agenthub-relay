@@ -66,7 +66,9 @@ export const DEFAULT_CONFIG = Object.freeze({
   checks: { timeoutMinutes: 10 },
   light: { maxScopeEntries: 10, maxChangedFiles: 10 },
   // Dispatch only inside a planner session the user confirmed (session.mjs).
-  sessions: { required: true },
+  // mentionReuse: an explicit #executor mention in a planner's prompt counts as
+  // keeping the saved roles when no session is confirmed yet (off: ask first).
+  sessions: { required: true, mentionReuse: false },
 });
 
 const TOP_KEYS = ['profile', 'profiles', 'plannerProfiles', 'executors', 'checks', 'light', 'sessions'];
@@ -297,9 +299,9 @@ export function buildConfig({ layers = [], env = {}, planner = 'unknown' } = {})
     if (data.sessions !== undefined) {
       if (!isObject(data.sessions)) throw fail('config-invalid', `${where}: sessions must be an object`);
       for (const [key, value] of Object.entries(data.sessions)) {
-        if (key !== 'required') throw fail('config-invalid', `${where}: sessions.${key} is not a known setting`);
-        if (typeof value !== 'boolean') throw fail('config-invalid', `${where}: sessions.required must be true or false`);
-        sessions.required = value;
+        if (key !== 'required' && key !== 'mentionReuse') throw fail('config-invalid', `${where}: sessions.${key} is not a known setting`);
+        if (typeof value !== 'boolean') throw fail('config-invalid', `${where}: sessions.${key} must be true or false`);
+        sessions[key] = value;
       }
     }
     if (data.profile !== undefined) {
@@ -401,7 +403,7 @@ const SETTABLE = [
   { pattern: /^executors\.([a-z]+)\.(model|effort|command)$/, parse: value => value },
   { pattern: /^executors\.([a-z]+)\.timeoutMinutes$/, parse: value => Number(value) },
   { pattern: /^checks\.shell$/, parse: value => value },
-  { pattern: /^sessions\.required$/, parse: parseBoolean },
+  { pattern: /^sessions\.(?:required|mentionReuse)$/, parse: parseBoolean },
 ];
 
 function parseBoolean(value) {
@@ -418,6 +420,7 @@ export const SETTABLE_KEYS = Object.freeze([
   'executors.<codex|claude|dsh|agy>.<model|effort|command|timeoutMinutes>',
   'checks.shell',
   'sessions.required',
+  'sessions.mentionReuse',
 ]);
 
 /**

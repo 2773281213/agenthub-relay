@@ -23,6 +23,7 @@ These rules apply to every agent working in this repository, whichever agent is 
 - Send nothing to a taken-over job until it is collected or the planner forces it; a taken-over job keeps its scope, apply refuses it, and discard needs force.
 - Change a job's status, integration or turn only in one store update that checks the current state first; never hold a lock while waiting for a turn to stop, and never run git on the main tree while another process may snapshot it (apply holds the dispatch lock for `git apply`).
 - Find an executor outside PATH only for its built-in command name; never replace a command the user configured.
+- An `#executor` mention asks the planner to dispatch; it never skips the planner session's confirmation unless the user turned on `sessions.mentionReuse`, and the mod adds its note only in a planner session, never in an executor process or to a slash command.
 - Start every child process with `windowsHide` on Windows: a worker has no console, and a child that gets a console of its own can be killed with it.
 
 ## Verification rules

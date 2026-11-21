@@ -12,6 +12,6 @@ This thin entry uses the agenthub-relay skill in the sibling `../agenthub-relay`
 2. Ask the user whether to keep these roles or change them, and wait for the answer.
 3. Say exactly what you will confirm, then run `session confirm <id> --reuse`, or `session confirm <id>` with `--deep`, `--light` or `--review` set to `executor[:model][@effort]` (add `--user` when the user wants the change for every project). If a check fails, nothing is saved: show the reason and the suggested names and ask again. Use the session id on later dispatches.
 
-`config show` lists every setting and where it comes from; `config set <key> <value>` and `config unset <key>` change single settings (tier values are checked the same way), for example `sessions.required` or an executor's `timeoutMinutes`.
+`config show` lists every setting and where it comes from; `config set <key> <value>` and `config unset <key>` change single settings (tier values are checked the same way), for example `sessions.required`, `sessions.mentionReuse` (an explicit `#executor` mention keeps the saved roles without asking) or an executor's `timeoutMinutes`.
 
 DeepSeek Harness uses its own settings: the relay shows its default model and refuses a model for it. Credentials (`passEnv`) are not settable here; they are edited by hand and hold variable names only. This skill never changes any agent's own settings, the planner's model included; in Claude Code that is `/model`.

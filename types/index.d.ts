@@ -25,8 +25,23 @@ export type RelayKeepAlive = {
   notified: string[]
 }
 
+/** One job as the jobs pane draws it (relay_status's summary, trimmed). */
+export type RelayPaneJob = {
+  id: string
+  title: string
+  tier: string
+  executor: string
+  model: string | null
+  status: string
+  integration: string
+  verification: string | null
+  turn: number
+  takenOver: boolean
+  resumable: boolean
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'agenthub-relay': { keepAlive: Shaped<RelayKeepAlive> }
+    'agenthub-relay': { keepAlive: Shaped<RelayKeepAlive>; jobs: Shaped<RelayPaneJob[]> }
   }
 }

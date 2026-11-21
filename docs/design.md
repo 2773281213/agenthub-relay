@@ -162,6 +162,15 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 7. **其他**：结果带 `next` 提示；`result --format text`；用量按适配器归一化后按轮累加；`install-skills` 按文件清单与历次发布的摘要更新本机副本；mod 按"任务 + 轮次"唤醒、不唤醒被接管的任务。
 8. **Windows 收尾时的 `git-failed`**：worker 以 detached 启动、没有控制台，它启动的 git 若不隐藏窗口会各自新开控制台，控制台被关时 git 以 0xC000013A（STATUS_CONTROL_C_EXIT）退出。实测不隐藏时约 1/80 失败，隐藏后 0/160。现在 git 一律 `windowsHide`，此类退出码在收集时重试。
 
+### v0.5.1：Claude Code 里的应用内调用
+
+对应 codex-host 的 `#` 委派（`delegation-mention-rewrite.ts`），只在 Claude Code 的 mod 里实现（规划者中立：`src/` 不变，其他规划者靠 skill 里的约定）。
+
+1. `prompt.autocomplete`（`token: /^#/`）给出中继的四个执行者，旁边写执行者名、承担的档位和模型；数据来自每 10 分钟刷新一次的 `relay_agents`，不在按键时调 MCP。
+2. `prompt.submit`：文本里有 `#执行者`（不算代码片段里的）、又不是斜杠命令时，输入原样保留，附一条 `context`（只给模型看），要求用 `relay_dispatch` 加 executor 派发、不要自己做。会话确认照旧（0.3 起的规矩）：没有确认的会话就先问一句是否沿用；`sessions.mentionReuse` 为 true 时，明确的提及算作沿用。
+3. `/relay jobs` 打开面板（`$.ui.open`），列出还没 apply/discard 的任务：打开（`relay_takeover` 加 `open`，运行中则加 `stop`，终端命令经 `$.ui.copy` 放进剪贴板）、审阅（提交一句让规划者看结果）、交还（`relay_collect`）。缩成小窗时只显示一行概要。
+4. mod 模块改名为 `hooks/register.tsx`（面板用 JSX）。
+
 ## 来源
 
 - [linux.do 话题 3028918](https://linux.do/t/topic/3028918)
