@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { TIERS } from './config.mjs';
+import { splitHarness, TIERS } from './config.mjs';
 import { writeJsonAtomic } from './store.mjs';
 
 const SESSION_ID = /^s\d{8}-\d{6}-[0-9a-f]{6}$/;
@@ -91,19 +91,20 @@ export function createSessionStore(root) {
   };
 }
 
-/** A route as plain data: `{ executor, model?, effort? }`. */
+/** A route as plain data: `{ executor, harness?, model?, effort? }`. */
 export function plainRoute(route) {
-  const value = typeof route === 'string' ? { executor: route } : route;
+  const value = typeof route === 'string' ? splitHarness(route) : route;
   return {
     executor: value.executor,
+    ...(value.harness !== undefined ? { harness: value.harness } : {}),
     ...(value.model !== undefined ? { model: value.model } : {}),
     ...(value.effort !== undefined ? { effort: value.effort } : {}),
   };
 }
 
-/** A route as written on the command line: executor[:model][@effort]. */
+/** A route as written on the command line: executor[/harness][:model][@effort]. */
 export function routeText(route) {
-  return `${route.executor}${route.model ? `:${route.model}` : ''}${route.effort ? `@${route.effort}` : ''}`;
+  return `${route.executor}${route.harness ? `/${route.harness}` : ''}${route.model ? `:${route.model}` : ''}${route.effort ? `@${route.effort}` : ''}`;
 }
 
 /**
@@ -125,8 +126,10 @@ export function describeTiers({ routes, config, catalogs, check }) {
     const model = route.model ?? executorConfig.model;
     const effort = route.effort ?? executorConfig.effort;
     const own = catalog?.default;
+    const harness = route.harness ?? executorConfig.harness;
     const entry = {
       executor: route.executor,
+      ...(harness ? { harness } : {}),
       route: routeText(route),
       model: model ?? own?.model ?? null,
       modelFrom: route.model ? 'tier' : executorConfig.model ? `executors.${route.executor}.model` : own?.model ? `${route.executor}'s own settings${own.modelFrom ? ` (${own.modelFrom})` : ''}` : `${route.executor}'s built-in default`,

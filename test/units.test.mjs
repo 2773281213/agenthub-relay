@@ -9,7 +9,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { loadConfig } from '../src/config.mjs';
-import { adapterFor, buildFollowUpPrompt, displayCommand, dshCapabilities, normalizeUsage } from '../src/executors.mjs';
+import { adapterFor, buildFollowUpPrompt, displayCommand, dshCapabilities, normalizeUsage, turnUsage } from '../src/executors.mjs';
 import { openDetached } from '../src/platform.mjs';
 import { holdsScope, planSend, PolicyError } from '../src/policy.mjs';
 import { checkTransition, createStore, isAbandonedReservation, turnNumber, turnsOf } from '../src/store.mjs';
@@ -274,4 +274,14 @@ test('a takeover opens only codex:// thread links and relay-built commands, with
   } finally {
     cleanup();
   }
+});
+
+test("a Codex turn's usage is its increase over the thread's running total; per-run executors keep theirs", () => {
+  const first = turnUsage('codex', { inputTokens: 25900, cachedInputTokens: 2778, outputTokens: 5 }, []);
+  assert.deepEqual(first, { usage: { inputTokens: 25900, cachedInputTokens: 2778, outputTokens: 5 }, sessionUsage: { inputTokens: 25900, cachedInputTokens: 2778, outputTokens: 5 } });
+  const second = turnUsage('codex', { inputTokens: 51839, cachedInputTokens: 20788, outputTokens: 10 }, [{ n: 1, ...first }], { resumed: true });
+  assert.deepEqual(second.usage, { inputTokens: 25939, cachedInputTokens: 18010, outputTokens: 5 });
+  assert.deepEqual(turnUsage('codex', { inputTokens: 9 }, [{ n: 1 }], { resumed: true }), { sessionUsage: { inputTokens: 9 } }, 'no earlier total: no own figure');
+  assert.deepEqual(turnUsage('claude', { inputTokens: 9 }, [{ n: 1, usage: { inputTokens: 4 } }], { resumed: true }), { usage: { inputTokens: 9 } });
+  assert.deepEqual(turnUsage('codex', {}, []), {});
 });

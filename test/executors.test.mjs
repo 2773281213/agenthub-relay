@@ -199,7 +199,7 @@ test('availability is looked up on PATH; reserved executors are listed with thei
   const { dir, cleanup } = tempDir();
   try {
     const listed = describeExecutors(config, { PATH: dir, AGENTHUB_RELAY_DISCOVERY: 'off' });
-    assert.deepEqual(listed.map(e => e.id), ['codex', 'claude', 'dsh', 'agy', 'acp']);
+    assert.deepEqual(listed.map(e => e.id), ['codex', 'claude', 'dsh', 'agy', 'codexhost', 'acp']);
     assert.ok(listed.filter(e => !e.reserved).every(e => e.available === false));
     assert.deepEqual(listed.find(e => e.id === 'codex').tiers, ['deep']);
     assert.match(listed.find(e => e.id === 'acp').reason, /reserved/);

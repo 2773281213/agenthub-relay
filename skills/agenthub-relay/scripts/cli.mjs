@@ -16,9 +16,11 @@ import { installSkills, skillSource, skillTargets } from './install.mjs';
 import { agentDefaults, assertRoute, catalogFor, MODEL_AGENTS } from './models.mjs';
 import { resolveCommand } from './platform.mjs';
 import { serveMcp } from './mcp.mjs';
+import { isExecutorCaller } from './policy.mjs';
 import { createStore, TERMINAL } from './store.mjs';
 import { createRelay, resolveRoot, VERSION } from './tools.mjs';
 import { runWorker } from './worker.mjs';
+import { codexhostCommand, runWaker } from './wake.mjs';
 
 /** The longest `wait` from the command line; MCP clients keep the 50-second limit. */
 const CLI_MAX_WAIT_SECONDS = 3600;
@@ -38,8 +40,8 @@ Planning:
   agenthub-relay models [codex|claude|dsh|agy] [--refresh]   The models each agent offers and uses by default
   agenthub-relay models check <agent> [<model>] [--effort <level>]
   agenthub-relay dispatch --session <sessionId> --tier <deep|light|review> (--task <text> | --task-file <file|->)
-                 [--scope <path>]... [--check <command>]... [--executor <id>]
-                 [--model <name>] [--effort <level>] [--title <text>] [--acceptance <text>]
+                 [--scope <path>]... [--check <command>]... [--executor <id|codexhost/<harness>>]
+                 [--harness <id>] [--model <name>] [--effort <level>] [--title <text>] [--acceptance <text>]
                  [--timeout-minutes <n>]
   agenthub-relay wait [<jobId>...] [--timeout <seconds>]   Until a job ends (default 50 s, at most ${CLI_MAX_WAIT_SECONDS})
   agenthub-relay result <jobId> [--format json|text]   Summary, checks, changed and out-of-scope files, turns, next steps
@@ -149,6 +151,7 @@ async function dispatch(args) {
     scope: { type: 'string', multiple: true },
     check: { type: 'string', multiple: true },
     executor: { type: 'string' },
+    harness: { type: 'string' },
     model: { type: 'string' },
     effort: { type: 'string' },
     title: { type: 'string' },
@@ -164,6 +167,7 @@ async function dispatch(args) {
     scope: values.scope,
     checks: values.check,
     executor: values.executor,
+    harness: values.harness,
     model: values.model,
     effort: values.effort,
     title: values.title,
@@ -413,7 +417,8 @@ async function config(args) {
     const { values, positionals } = parse(rest, { user: { type: 'boolean' } }, { positionals: 'many' });
     const wanted = sub === 'set' ? 2 : 1;
     if (positionals.length !== wanted) throw new UsageError(sub === 'set' ? 'config set <key> <value> [--user]' : 'config unset <key> [--user]');
-    if (process.env.AGENTHUB_RELAY_ROLE === 'executor') {
+    const here = await rootOrNull();
+    if (isExecutorCaller(process.env, here ? createStore(here).list() : [])) {
       throw Object.assign(new Error('An agenthub-relay executor may not change the relay settings.'), { code: 'executor-role' });
     }
     let file;
@@ -517,9 +522,31 @@ async function worker(jobId) {
   return 0;
 }
 
+/** The waker of one planner Thread (wake.mjs); started by dispatch, not by hand. */
+async function wake(thread) {
+  if (!thread) throw new UsageError('Usage: agenthub-relay wake <thread>');
+  const controller = new AbortController();
+  process.on('SIGTERM', () => controller.abort());
+  process.on('SIGINT', () => controller.abort());
+  const root = process.env.AGENTHUB_RELAY_ROOT ?? process.cwd();
+  const command = codexhostCommand(loadConfig({ root, env: process.env }), process.env);
+  if (!command) throw Object.assign(new Error('No codexhost CLI to wake the planner with'), { code: 'executor-missing' });
+  const stamp = () => new Date().toISOString();
+  const outcome = await runWaker({
+    root, thread, env: process.env, command, signal: controller.signal,
+    // tests only: a shorter tick
+    ...(Number(process.env.AGENTHUB_RELAY_WAKE_TICK_MS) > 0 ? { tickMs: Number(process.env.AGENTHUB_RELAY_WAKE_TICK_MS) } : {}),
+    log: line => process.stdout.write(`${stamp()} ${line}\n`),
+  });
+  process.stdout.write(`${stamp()} waker for ${thread} stopped: ${outcome.stopped}${outcome.note ? ` (${outcome.note})` : ''}\n`);
+  return 0;
+}
+
 async function main(argv) {
   const [command, ...rest] = argv;
   switch (command) {
+    case 'wake':
+      return wake(rest[0]);
     case 'mcp': {
       let client = 'unknown';
       const relay = createRelay({ cwd: process.cwd(), env: process.env, clientName: () => client });

@@ -14,7 +14,10 @@ export const TIERS = Object.freeze(['deep', 'light', 'review']);
 export const WRITE_TIERS = Object.freeze(new Set(['deep', 'light']));
 
 /** Executors with an adapter and the reserved ones that fail closed. */
-export const EXECUTOR_IDS = Object.freeze(['codex', 'claude', 'dsh', 'agy', 'acp']);
+export const EXECUTOR_IDS = Object.freeze(['codex', 'claude', 'dsh', 'agy', 'codexhost', 'acp']);
+
+/** A codexhost harness id, as `codexhost harness list` prints it (codexhost/<harness> in a route). */
+export const HARNESS_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
 /** Agents that can plan. `unknown` is recorded when none is recognized. */
 export const PLANNER_IDS = Object.freeze(['claude', 'codex', 'dsh', 'agy']);
@@ -61,6 +64,14 @@ export const DEFAULT_CONFIG = Object.freeze({
     agy: {
       command: 'agy', passEnv: [], timeoutMinutes: 45, extraArgs: [],
       modelArgs: ['--model', '{model}'], effortArgs: ['--effort', '{effort}'],
+    },
+    // codex-host (BytePioneer-AI/codex-host): one of its harnesses, chosen by
+    // codexhost/<harness> or executors.codexhost.harness, runs the job as a
+    // Thread the Host keeps, which Codex Desktop lists and can open. The
+    // model is codexhost's opaque model ref; effort is its thinking option.
+    codexhost: {
+      command: 'codexhost', passEnv: [], timeoutMinutes: 60, extraArgs: [],
+      modelArgs: ['--model', '{model}'], effortArgs: ['--thinking', '{effort}'],
     },
   },
   checks: { timeoutMinutes: 10 },
@@ -183,6 +194,12 @@ function mergeExecutor(id, base, override, where) {
         }
         merged.bare = value;
         break;
+      case 'harness':
+        if (id !== 'codexhost' || typeof value !== 'string' || !HARNESS_NAME.test(value)) {
+          throw fail('config-invalid', `${where}.harness is a codexhost harness id (letters, digits, . _ -) for the codexhost executor only`);
+        }
+        merged.harness = value;
+        break;
       case 'model':
       case 'effort':
         checkName(value, `${where}.${key}`);
@@ -203,15 +220,18 @@ function mergeExecutor(id, base, override, where) {
   return merged;
 }
 
-/** A tier's route: the executor and, optionally, the model and effort to run it with. */
+/** A tier's route: the executor (and a codexhost harness) and, optionally, the model and effort to run it with. */
 function normalizeRoute(value, where) {
-  const route = typeof value === 'string' ? { executor: value } : value;
-  if (!isObject(route)) throw fail('config-invalid', `${where} must be an executor name or { executor, model?, effort? }`);
+  const route = typeof value === 'string' ? splitHarness(value) : value;
+  if (!isObject(route)) throw fail('config-invalid', `${where} must be an executor name or { executor, harness?, model?, effort? }`);
   for (const key of Object.keys(route)) {
-    if (!['executor', 'model', 'effort'].includes(key)) throw fail('config-invalid', `${where}.${key} is not a known setting`);
+    if (!['executor', 'harness', 'model', 'effort'].includes(key)) throw fail('config-invalid', `${where}.${key} is not a known setting`);
   }
   if (!EXECUTOR_IDS.includes(route.executor)) {
     throw fail('config-invalid', `${where} names unknown executor "${route.executor}"`);
+  }
+  if (route.harness !== undefined && (route.executor !== 'codexhost' || typeof route.harness !== 'string' || !HARNESS_NAME.test(route.harness))) {
+    throw fail('config-invalid', `${where}.harness is a codexhost harness id, for the codexhost executor only`);
   }
   if (route.model !== undefined) checkName(route.model, `${where}.model`);
   if (route.effort !== undefined) checkName(route.effort, `${where}.effort`);
@@ -384,16 +404,23 @@ export function loadConfig({ root, env = process.env, planner = 'unknown' } = {}
   return buildConfig({ layers: configLayers({ root, env }), env, planner });
 }
 
+/** `codexhost/pi` as { executor: 'codexhost', harness: 'pi' }; any other name as { executor }. */
+export function splitHarness(text) {
+  const [executor, harness] = String(text).split('/');
+  return harness === undefined ? { executor } : { executor, harness };
+}
+
 /**
  * Parses a route value as written on a command line: `executor`,
- * `executor:model`, `executor@effort` or `executor:model@effort`.
+ * `executor:model`, `executor@effort` or `executor:model@effort`, where the
+ * executor may be `codexhost/<harness>`.
  */
 export function parseRoute(text) {
-  const match = /^([a-z]+)(?::([^@]+))?(?:@(.+))?$/.exec(String(text ?? '').trim());
-  if (!match) throw fail('invalid-value', `"${text}" is not executor[:model][@effort]`);
-  const [, executor, model, effort] = match;
-  if (!model && !effort) return executor;
-  return { executor, ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+  const match = /^([a-z]+)(?:\/([A-Za-z0-9._-]+))?(?::([^@]+))?(?:@(.+))?$/.exec(String(text ?? '').trim());
+  if (!match) throw fail('invalid-value', `"${text}" is not executor[/harness][:model][@effort]`);
+  const [, executor, harness, model, effort] = match;
+  if (!harness && !model && !effort) return executor;
+  return { executor, ...(harness ? { harness } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
 }
 
 const SETTABLE = [
@@ -401,6 +428,7 @@ const SETTABLE = [
   { pattern: /^plannerProfiles\.([a-z]+)$/, parse: value => value },
   { pattern: /^profiles\.([A-Za-z0-9_-]+)\.(deep|light|review)$/, parse: parseRoute },
   { pattern: /^executors\.([a-z]+)\.(model|effort|command)$/, parse: value => value },
+  { pattern: /^executors\.codexhost\.harness$/, parse: value => value },
   { pattern: /^executors\.([a-z]+)\.timeoutMinutes$/, parse: value => Number(value) },
   { pattern: /^checks\.shell$/, parse: value => value },
   { pattern: /^sessions\.(?:required|mentionReuse)$/, parse: parseBoolean },
@@ -417,7 +445,8 @@ export const SETTABLE_KEYS = Object.freeze([
   'profile',
   'plannerProfiles.<planner>',
   'profiles.<name>.<deep|light|review>',
-  'executors.<codex|claude|dsh|agy>.<model|effort|command|timeoutMinutes>',
+  'executors.<codex|claude|dsh|agy|codexhost>.<model|effort|command|timeoutMinutes>',
+  'executors.codexhost.harness',
   'checks.shell',
   'sessions.required',
   'sessions.mentionReuse',

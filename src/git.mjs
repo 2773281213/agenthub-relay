@@ -200,13 +200,31 @@ export async function patchIsApplied(root, patchFile) {
   return reverse.code === 0;
 }
 
-/** Removes the job's worktree and branch; missing pieces are fine. */
+/** Errors with which Windows refuses to delete a folder another process has open (its current directory, say). */
+const HELD = new Set(['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY']);
+
+/**
+ * Removes the job's worktree and branch; missing pieces are fine. A folder
+ * another process still holds (a codexhost harness keeps the folder it ran
+ * in as its working directory) is emptied as far as it can be and reported
+ * as `{ leftover }` rather than failing: the job's branch and registration go
+ * all the same. Any other failure throws.
+ */
 export async function removeWorktree(root, id) {
   const dir = worktreePath(root, id);
+  let leftover;
   if (fs.existsSync(dir)) {
     const removed = await git(root, ['worktree', 'remove', '--force', dir], { allowFailure: true });
-    if (removed.code !== 0) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    if (removed.code !== 0) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch (err) {
+        if (!HELD.has(err.code)) throw err;
+        leftover = { path: dir, reason: `${err.code}: another process still has it open` };
+      }
+    }
   }
   await git(root, ['worktree', 'prune'], { allowFailure: true });
   await git(root, ['branch', '-D', branchName(id)], { allowFailure: true });
+  return leftover ? { removed: false, leftover } : { removed: true };
 }

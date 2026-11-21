@@ -25,6 +25,10 @@ These rules apply to every agent working in this repository, whichever agent is 
 - Find an executor outside PATH only for its built-in command name; never replace a command the user configured.
 - An `#executor` mention asks the planner to dispatch; it never skips the planner session's confirmation unless the user turned on `sessions.mentionReuse`, and the mod adds its note only in a planner session, never in an executor process or to a slash command.
 - Start every child process with `windowsHide` on Windows: a worker has no console, and a child that gets a console of its own can be killed with it.
+- Drive the codexhost executor only through the documented `codexhost` CLI and its JSON fields (threadId, turnId, status, result, pendingQuestions); never edit codex-host's files or settings. Strip `CODEXHOST_RUNTIME_*` and the caller's Thread ids from its environment.
+- Treat two codexhost limits as known exceptions: the Host starts the harness, so a codexhost review has no hard read-only sandbox (its changes are all out of scope and cannot be applied), and `AGENTHUB_RELAY_ROLE` does not reach the harness, so a caller whose `CODEXHOST_THREAD_ID` or `CODEX_THREAD_ID` is the Thread of a running or needs-input codexhost job is refused as an executor.
+- Record a turn that stopped on an executor's question as `failed` with `error.code` `needs-input`; such a job keeps its scope, and an answer interrupts the waiting turn.
+- Tell a planner it will be woken only when something will wake it: the Claude Code mod, or a codexhost Thread the Host can read; any other planner waits with relay_wait.
 
 ## Verification rules
 
@@ -33,4 +37,5 @@ These rules apply to every agent working in this repository, whichever agent is 
 
 ## Cache keep-alive rules
 
-- Keep the Claude Code planner's prompt cache warm only through `$.model.fork`, only while relay jobs are running, never once the cache is presumed cold, and never beyond the configured ceiling; keep-alive must not add turns to the transcript.
+- Keep a planner's prompt cache warm only with a request that resends its own conversation without adding a turn to it (for Claude Code, `$.model.fork`), only while relay jobs are running, never once the cache is presumed cold, and never beyond the configured ceiling.
+- Do not keep a planner warm that has no such request: Codex (`exec resume --ephemeral` still writes the turn to the Thread's rollout, measured on 26.1117) and Antigravity are reported unsupported, DeepSeek Harness not needed (its disk cache lasts hours to days); say why in `relay_agents`.

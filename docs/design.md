@@ -171,6 +171,15 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 3. `/relay jobs` 打开面板（`$.ui.open`），列出还没 apply/discard 的任务：打开（`relay_takeover` 加 `open`，运行中则加 `stop`，终端命令经 `$.ui.copy` 放进剪贴板）、审阅（提交一句让规划者看结果）、交还（`relay_collect`）。缩成小窗时只显示一行概要。
 4. mod 模块改名为 `hooks/register.tsx`（面板用 JSX）。
 
+### v0.5.2：codexhost 执行后端与各规划者的等待方式
+
+1. **codexhost 执行者**（`src/codexhost.mjs`）：路由写成 `codexhost/<harness>[:model][@effort]`（或 `executors.codexhost.harness` 作默认），一轮就是 codex-host 的一个 Thread 的一轮：派发 `delegate start --harness <h> --cwd <worktree> --task-file -`，续接 `thread send <thread> --message-file -`，之后 `thread wait` 到本轮终态。model 是 codexhost 的不透明模型引用，effort 走 `--thinking`。Thread id 拿到就写进 `job.native`；接管就是在 Codex Desktop 里打开 `codex://threads/<id>`。只用文档写明的 JSON 字段；Thread 状态为终态但没有本轮 turn（实测 opencode 启动超时时如此）算失败。CLI 的环境去掉 `CODEXHOST_RUNTIME_*` 和调用者的 Thread id，补上 `CODEXHOST_DATA_DIR` 等定位 Host 的变量；不在 PATH 时按 `~/.codexhost/shared-host-ready.json` 记录的安装位置找 `bin/codexhost`。
+2. **needs-input**：harness 提问时本轮结束，记为 `failed`、`error.code: 'needs-input'`，问题在 `needsInput.questions`；这样的任务继续占着范围，`relay_send` 的回答会带 `--interrupt` 替掉那一轮（那一轮在 Thread 里仍算活跃）。取消和超时会 `thread cancel`，不只是结束等待的进程。
+3. **两处例外**：Host 自己启动 harness，所以 codexhost 的 review 没有硬只读沙箱（改动全部算越界、不能 apply），`AGENTHUB_RELAY_ROLE` 也传不进去；防递归改为看调用者的 `CODEXHOST_THREAD_ID`/`CODEX_THREAD_ID` 是否是某个运行中或 needs-input 的 codexhost 任务的 Thread（`policy.isExecutorCaller`）。
+4. **Codex 规划者不保活**：实测（Codex 26.1117，自定义 provider）`codex exec resume <thread> --ephemeral --all` 仍把刷新提示和回复写进 Thread 的 rollout（每次约 8 KB、一轮），违反"保活不加轮次"；所以 Codex 标为不支持，DSH 不需要，agy 不支持，原因写在 `relay_agents.planners`。同一次实测还发现 codex 的 `turn.completed.usage` 是线程累计值，续接轮的用量现在按差值记（`turnUsage`）。
+5. **codexhost 唤醒**（`src/wake.mjs`）：规划者跑在 Host 能读到的 Thread 里时（派发时用 `thread read` 核实一次，终端里的 Codex CLI 也有 `CODEX_THREAD_ID`，但 Host 够不着），任务记下 `wake.thread`，并按规划者 Thread 起一个常驻 `agenthub-relay wake <thread>`（锁文件记 pid，pid 不在才接手）。它每 15 秒看一次：结束了、没读结果、没 apply/discard、没被接管、这一轮还没通知过的任务合成一条 `thread send`；THREAD_BUSY 就下次再试，最多 6 小时；没有运行中的任务、也没有要通知的就退出。结果里 `watcher.active` 只在真有东西会唤醒时为真。
+6. **worktree 被占用**：codexhost 的 harness 会把它工作过的目录一直当作当前目录，Windows 上删不掉。discard/apply 照样完成、删掉分支，只报告剩下的目录（`warnings`）。
+
 ## 来源
 
 - [linux.do 话题 3028918](https://linux.do/t/topic/3028918)

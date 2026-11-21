@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { RESERVED } from './config.mjs';
+import { driveCodexhost } from './codexhost.mjs';
 import { locateExecutor } from './discovery.mjs';
 import { locateCommand, resolveCommand } from './platform.mjs';
 
@@ -243,6 +244,9 @@ const ADAPTERS = Object.freeze({
   codex: {
     label: 'Codex CLI',
     resumable: true,
+    // turn.completed.usage is the thread's running total, not the turn's own
+    // (measured on 26.1117: 25900 -> 51839 -> 77817 input over three turns).
+    cumulativeUsage: true,
     invocation(job, cfg, files, prompt) {
       return {
         argv: [cfg.command, 'exec', '--json', '--sandbox', job.write ? 'workspace-write' : 'read-only', '-o', files.final, ...selectionArgs(job, cfg), ...cfg.extraArgs, '-'],
@@ -469,6 +473,26 @@ const ADAPTERS = Object.freeze({
       return { terminal: { label: 'Antigravity CLI', argv: [command, '--conversation', sessionId] } };
     },
   },
+  // Not a process per turn: the Host runs the harness and the worker drives
+  // the codexhost CLI (codexhost.mjs). Its Threads are Codex Desktop Threads.
+  codexhost: {
+    label: 'codex-host',
+    resumable: true,
+    drive: driveCodexhost,
+    sessionFromLine() {
+      return undefined; // the driver reports the Thread id itself
+    },
+    usage() {
+      return {};
+    },
+    takeover({ command, sessionId }) {
+      return {
+        app: { label: 'Codex desktop app (codexhost Thread)', url: `codex://threads/${sessionId}`, verified: true },
+        terminal: { label: 'codexhost CLI', argv: [command, 'thread', 'read', sessionId, '--format', 'text'] },
+        note: 'The Thread is the codexhost Host\'s: open it in Codex Desktop to continue it; the CLI command shows where it stands.',
+      };
+    },
+  },
 });
 
 function claudeTail(argv, job, cfg) {
@@ -521,6 +545,31 @@ export function normalizeUsage(executor, parsed) {
   } catch {
     return {};
   }
+}
+
+/**
+ * A turn's own usage. An executor that reports its session's running total
+ * (`cumulativeUsage`) gets the increase over the last earlier turn that
+ * recorded one; a resumed turn with no such earlier figure has no own usage,
+ * only `sessionUsage`. Returns { usage?, sessionUsage? }.
+ */
+export function turnUsage(executor, normalized, earlierTurns = [], { resumed = false } = {}) {
+  if (!normalized || !Object.keys(normalized).length) return {};
+  let cumulative = false;
+  try {
+    cumulative = adapterFor(executor).cumulativeUsage === true;
+  } catch {
+    // an unknown executor reports per run
+  }
+  if (!cumulative) return { usage: normalized };
+  const before = [...earlierTurns].reverse().find(turn => turn?.sessionUsage)?.sessionUsage;
+  if (!before) return resumed ? { sessionUsage: normalized } : { usage: normalized, sessionUsage: normalized };
+  const usage = {};
+  for (const [key, value] of Object.entries(normalized)) {
+    const delta = value - (before[key] ?? 0);
+    if (Number.isFinite(delta) && delta >= 0) usage[key] = delta;
+  }
+  return { usage, sessionUsage: normalized };
 }
 
 /**

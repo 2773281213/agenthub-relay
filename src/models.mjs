@@ -618,6 +618,12 @@ export function checkRoute(route, catalog) {
     }
     return { status: 'verified', reason: `${model} is in Antigravity's model list${effort ? `; effort ${effort} is checked when the job runs` : ''}` };
   }
+  if (executor === 'codexhost') {
+    if (model === undefined && effort === undefined) {
+      return { status: 'agent-default', reason: "the codexhost harness uses its own default model and thinking option" };
+    }
+    return { status: 'format-only', reason: 'codexhost checks the model ref and thinking option against the harness when the job starts (see "codexhost harness inspect <harness>")' };
+  }
   return { status: 'unsupported', code: 'unknown-executor', reason: `Unknown executor "${executor}"` };
 }
 

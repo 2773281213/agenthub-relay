@@ -20,13 +20,14 @@ import { adapterFor, describeExecutors, displayCommand, SESSION_ID } from './exe
 import { addWorktree, applyPatch, ensureExcluded, patchIsApplied, removeWorktree, repoRoot, snapshotBase } from './git.mjs';
 import { ACCEPTED, agentDefaults, assertRoute, catalogFor, checkRoute, MODEL_AGENTS } from './models.mjs';
 import { openDetached, workerSpawnOptions } from './platform.mjs';
-import { holdsScope, isExecutorCaller, planDispatch, planSend, scopeConflict } from './policy.mjs';
+import { codexhostCommand, ensureWaker, PLANNER_KEEPALIVE, plannerThread, startWakerProcess, threadReachable, wakerState } from './wake.mjs';
+import { holdsScope, isExecutorCaller, isNeedsInput, planDispatch, planSend, scopeConflict } from './policy.mjs';
 import { createSessionStore, describeTiers, isSessionId, newSessionId, plainRoute, routeText } from './session.mjs';
 import {
-  createStore, isAbandonedReservation, isAlive, isJobId, LIVE, newJobId, RESERVATIONS, TERMINAL, turnNumber, turnsOf,
+  createStore, isAbandonedReservation, isAlive, isJobId, LIVE, newJobId, RESERVATIONS, resultFetched, TERMINAL, turnNumber, turnsOf,
 } from './store.mjs';
 
-export const VERSION = '0.5.1';
+export const VERSION = '0.5.2';
 export const MAX_WAIT_SECONDS = 50;
 /** A watcher counts as active while it polled this recently. */
 export const WATCHER_ACTIVE_MS = 3 * 60_000;
@@ -105,7 +106,8 @@ export const TOOLS = Object.freeze([
         task: { type: 'string', description: 'What the executor should do, self-contained.' },
         tier: { type: 'string', enum: [...TIERS] },
         session: sessionSchema,
-        executor: { type: 'string', description: 'Override the session\'s route: codex, claude, dsh or agy.' },
+        executor: { type: 'string', description: 'Override the session\'s route: codex, claude, dsh, agy, or codexhost/<harness> (a codex-host harness, such as codexhost/claude-code).' },
+        harness: { type: 'string', description: 'For the codexhost executor: the codex-host harness to run on, as "codexhost harness list" prints it.' },
         model: { type: 'string', description: "Model for this job, checked and passed through the executor's own flag (codex -m, claude --model, agy --model); dsh uses its own settings and refuses one." },
         effort: { type: 'string', description: 'Reasoning effort for this job (codex model_reasoning_effort, claude --effort, agy --effort).' },
         scope: { type: 'array', items: { type: 'string' }, description: 'Project-relative files or directories the job may change.' },
@@ -235,12 +237,7 @@ export function startWorkerProcess(root, jobId, env, workerLog) {
   }
 }
 
-/** Whether the latest turn's result has been read with relay_result. */
-export function resultFetched(job) {
-  if (Number.isInteger(job.resultFetchedTurn)) return job.resultFetchedTurn >= turnNumber(job);
-  // A record from before turns: read once is read.
-  return !Array.isArray(job.turns) && Boolean(job.resultFetchedAt);
-}
+export { resultFetched };
 
 /** Token and cost figures summed over the job's turns, when its executor reports them per run. */
 function usageTotals(job) {
@@ -261,7 +258,10 @@ function summarize(job) {
     title: job.title,
     tier: job.tier,
     executor: job.executor,
+    ...(job.harness ? { harness: job.harness } : {}),
     status: job.status,
+    ...(isNeedsInput(job) ? { needsInput: true } : {}),
+    ...(job.wake ? { wake: { via: job.wake.via, ...(job.wake.notifiedTurn ? { notifiedTurn: job.wake.notifiedTurn } : {}) } } : {}),
     integration: job.integration,
     verification: job.verification,
     createdAt: job.createdAt,
@@ -310,6 +310,14 @@ export function nextFor(job, { watcherActive = false } = {}) {
       hint('relay_discard', `discard ${id} --force`, 'drop it and its worktree'),
     ];
   }
+  if (isNeedsInput(job)) {
+    return [
+      hint('relay_result', `result ${id}`, 'read the question the executor is waiting on (needsInput)'),
+      hint('relay_send', `send ${id} --message-file -`, 'answer it: the waiting turn is stopped and your answer starts the next one'),
+      hint('relay_takeover', `takeover ${id} --open`, 'answer it yourself in Codex Desktop'),
+      hint('relay_discard', `discard ${id}`, 'drop it'),
+    ];
+  }
   const next = [];
   if (!resultFetched(job)) next.push(hint('relay_result', `result ${id}`, 'read the summary, checks and changes first'));
   if (job.write && job.status === 'completed') next.push(hint('relay_apply', `apply ${id}`, 'apply the patch to your working tree'));
@@ -342,6 +350,11 @@ function relativePath(root, file) {
   return path.relative(root, file).split(path.sep).join('/');
 }
 
+/** What to tell the planner about a worktree folder another process kept open. */
+function leftoverWarning(root, leftover) {
+  return `The job's branch is gone, but its worktree folder ${relativePath(root, leftover.path)} could not be deleted (${leftover.reason}); a codexhost harness keeps the folder it ran in open. Delete the folder once that process has ended.`;
+}
+
 function clipText(text, max) {
   return typeof text === 'string' && text.length > max ? `${text.slice(0, max)}…` : text;
 }
@@ -363,6 +376,7 @@ export function createRelay({
   cwd = process.cwd(),
   env = process.env,
   startWorker = startWorkerProcess,
+  startWaker = startWakerProcess,
   clientName = () => 'unknown',
   planner,
   maxWaitSeconds = MAX_WAIT_SECONDS,
@@ -397,9 +411,80 @@ export function createRelay({
     return { active: now - watcherSeenAt <= WATCHER_ACTIVE_MS, lastSeenAt: new Date(watcherSeenAt).toISOString() };
   }
 
-  function refuseExecutor(what) {
-    if (isExecutorCaller(env)) {
+  /**
+   * Whether this process runs in the codexhost Thread of a relay job that is
+   * still running or waiting for an answer: a harness the Host started, which
+   * the relay's executor role cannot reach (policy.isExecutorCaller).
+   */
+  async function inJobThread() {
+    if (!env.CODEXHOST_THREAD_ID && !env.CODEX_THREAD_ID) return false;
+    let r;
+    try {
+      r = await root();
+    } catch {
+      return false; // no repository: no jobs to be inside of
+    }
+    return isExecutorCaller(env, createStore(r).list());
+  }
+
+  /**
+   * How this planner is woken when its jobs end, when it is not Claude Code
+   * (whose mod does that): through codexhost when it runs in a Thread the
+   * Host can reach, else not at all (it waits with relay_wait). Checked once
+   * per Thread for the life of this relay.
+   */
+  const wakeChecks = new Map();
+  async function wakeTarget(settings) {
+    const thread = plannerThread(env);
+    if (!thread || env.AGENTHUB_RELAY_WAKE === 'off') return null;
+    if (!wakeChecks.has(thread)) {
+      wakeChecks.set(thread, (async () => {
+        const command = codexhostCommand(settings, env, platform);
+        if (!command) return null;
+        const reachable = await threadReachable({ command, thread, env, platform }).catch(() => false);
+        return reachable ? { via: 'codexhost', thread } : null;
+      })());
+    }
+    return wakeChecks.get(thread);
+  }
+
+  /** How this caller is woken, for relay_agents. */
+  async function wakeReport(r, settings) {
+    const target = await wakeTarget(settings);
+    if (target) return { via: 'codexhost', thread: target.thread, waker: wakerState(r, target.thread) };
+    if (plannerThread(env)) return { via: 'relay_wait', reason: 'this Thread is not one the codexhost Host can reach' };
+    return { via: 'relay_wait', reason: 'a Claude Code planner with the plugin is woken by its mod; any other planner waits with relay_wait' };
+  }
+
+  /** Starts the waker of a job's planner Thread; a failure only costs the wake, never the job. */
+  function startWake(r, job) {
+    if (!job?.wake?.thread) return;
+    try {
+      ensureWaker(r, job.wake.thread, env, { start: startWaker });
+    } catch {
+      // the planner can still wait with relay_wait
+    }
+  }
+
+  /** The watcher a result reports: the Claude Code mod's, or the codexhost waker of the job's planner Thread. */
+  function watcherFor(job) {
+    const watching = watcher();
+    if (job?.wake?.thread) return { ...watching, active: true, via: 'codexhost' };
+    return watching;
+  }
+
+  /** The caller's role for the policy checks: 'executor' for an executor process or a relay job's codexhost Thread. */
+  async function callerRole() {
+    if (env.AGENTHUB_RELAY_ROLE === 'executor' || (await inJobThread())) return 'executor';
+    return env.AGENTHUB_RELAY_ROLE;
+  }
+
+  async function refuseExecutor(what) {
+    if (env.AGENTHUB_RELAY_ROLE === 'executor') {
       throw fail('executor-role', `This process runs as an agenthub-relay executor (AGENTHUB_RELAY_ROLE=executor); executors may not ${what}.`);
+    }
+    if (await inJobThread()) {
+      throw fail('executor-role', `This process runs in the codexhost Thread of a relay job that is still running or waiting for an answer; executors may not ${what}.`);
     }
   }
 
@@ -539,6 +624,7 @@ export function createRelay({
       // the last turn's heartbeat and worker.
       delete draft.cancelRequested;
       delete draft.error;
+      delete draft.needsInput;
       delete draft.endedAt;
       delete draft.startedAt;
       draft.heartbeatAt = queuedAt;
@@ -768,6 +854,10 @@ export function createRelay({
           review: 'Read-only investigation; any change is reported out of scope.',
         },
         executors: describeExecutors(settings, env, defaults, { platform }),
+        // How each planner waits: kept warm or not, and why; woken by the
+        // Claude Code mod, by codexhost in a Host Thread, or by relay_wait.
+        planners: PLANNER_KEEPALIVE,
+        wake: await wakeReport(r, settings),
       };
     },
 
@@ -785,7 +875,7 @@ export function createRelay({
           lastPlanner: last ? { planner: last.planner, confirmedAt: last.confirmedAt } : null,
         };
       }
-      if (isExecutorCaller(env)) {
+      if ((await callerRole()) === 'executor') {
         throw fail('executor-role', 'An agenthub-relay executor may not start or confirm planner sessions.');
       }
       if (args.session !== undefined && !isSessionId(args.session)) throw fail('unknown-session', `"${args.session}" is not a session id`);
@@ -815,7 +905,7 @@ export function createRelay({
           request,
           config: settings,
           jobs,
-          role: env.AGENTHUB_RELAY_ROLE,
+          role: await callerRole(),
           session,
           caller,
           agentDefaults: agentDefaults({ env, root: r }),
@@ -835,6 +925,7 @@ export function createRelay({
           warnings.push(`${base.untrackedCount} untracked file(s) are not in the job's baseline: ${base.untracked.join(', ')}${more}`);
         }
         const createdAt = new Date().toISOString();
+        const wake = await wakeTarget(settings);
         try {
           store.create({
             id,
@@ -855,6 +946,7 @@ export function createRelay({
             // Claude Code takes the session id it is to use, so a takeover or
             // a follow-up knows it before the first turn has ended.
             native: plan.executor === 'claude' ? { sessionId: crypto.randomUUID() } : {},
+            ...(wake ? { wake: { via: wake.via, thread: wake.thread } } : {}),
             baseWarnings: warnings,
             warnings,
           });
@@ -877,12 +969,14 @@ export function createRelay({
         const job = await store.update(id, draft => {
           draft.worker = { ...(draft.worker ?? {}), pid: draft.worker?.pid ?? pid };
         });
-        const watching = watcher();
+        startWake(r, job);
+        const watching = watcherFor(job);
         return {
           jobId: id,
           title: plan.title,
           tier: plan.tier,
           executor: plan.executor,
+          ...(plan.harness ? { harness: plan.harness } : {}),
           model: plan.model,
           effort: plan.effort,
           planner: caller === 'unknown' && session ? session.planner : caller,
@@ -902,7 +996,7 @@ export function createRelay({
     },
 
     async relay_send(args, { signal }) {
-      refuseExecutor('send to jobs');
+      await refuseExecutor('send to jobs');
       if (typeof args.message !== 'string' || args.message.trim() === '') throw fail('invalid-request', 'message must be a non-empty string');
       const r = await root();
       const settings = config(r);
@@ -915,7 +1009,7 @@ export function createRelay({
           throw fail('job-busy', `Job ${job.id} is still ${job.status}: wait for it, or pass interrupt: true to stop this turn and then send`, { status: job.status });
         }
         // Everything that would refuse the send is checked before anything is stopped.
-        planSend({ job: { ...job, status: 'completed' }, jobs: [], request: args, role: env.AGENTHUB_RELAY_ROLE, session, caller, config: settings });
+        planSend({ job: { ...job, status: 'completed' }, jobs: [], request: args, role: await callerRole(), session, caller, config: settings });
         await requestCancel(store, job.id);
         job = await waitForEnd(store, job.id, STOP_WAIT_MS, signal);
         if (!TERMINAL.has(job.status)) {
@@ -934,14 +1028,18 @@ export function createRelay({
         const jobs = await listJobs(store);
         const current = jobs.find(entry => entry.id === job.id) ?? job;
         if (!TERMINAL.has(current.status)) throw fail('job-busy', `Job ${current.id} is ${current.status}: another turn got there first`);
-        const plan = planSend({ job: current, jobs, request: args, role: env.AGENTHUB_RELAY_ROLE, session, caller, config: settings });
+        const plan = planSend({ job: current, jobs, request: args, role: await callerRole(), session, caller, config: settings });
         const queued = await queueTurn(r, store, current.id, {
           kind: 'send',
           by: 'planner',
           message: plan.message,
           ...(args.interrupt === true ? { interrupted: true } : {}),
+          // An answer to the question a turn stopped on (codexhost) replaces
+          // that turn, which still counts as active in its Thread.
+          ...(isNeedsInput(current) ? { answers: true } : {}),
         }, { endTakeover: args.force === true });
-        const watching = watcher();
+        startWake(r, queued.job);
+        const watching = watcherFor(queued.job);
         return {
           jobId: current.id,
           turn: queued.turn,
@@ -955,7 +1053,7 @@ export function createRelay({
     },
 
     async relay_takeover(args, { signal }) {
-      refuseExecutor('take jobs over');
+      await refuseExecutor('take jobs over');
       const r = await root();
       const settings = config(r);
       const store = createStore(r);
@@ -1017,7 +1115,7 @@ export function createRelay({
     },
 
     async relay_collect(args) {
-      refuseExecutor('collect jobs');
+      await refuseExecutor('collect jobs');
       const r = await root();
       const store = createStore(r);
       const job = await readJob(store, args.jobId);
@@ -1036,7 +1134,8 @@ export function createRelay({
           }
         }
         const queued = await queueTurn(r, store, current.id, { kind: 'collect', by: current.takeover ? 'user' : 'planner' });
-        const watching = watcher();
+        startWake(r, queued.job);
+        const watching = watcherFor(queued.job);
         return {
           jobId: current.id,
           turn: queued.turn,
@@ -1054,7 +1153,7 @@ export function createRelay({
       const store = createStore(r);
       if (args.jobId !== undefined) {
         const job = await readJob(store, args.jobId);
-        const watching = watcher();
+        const watching = watcherFor(job);
         return { job: summarize(job), watcher: watching, next: nextFor(job, { watcherActive: watching.active }) };
       }
       const jobs = (await listJobs(store)).filter(job => args.all === true || job.integration !== 'discarded');
@@ -1127,6 +1226,8 @@ export function createRelay({
         warnings: job.warnings ?? [],
         executorRun: job.executorRun,
         error: job.error,
+        // The questions the executor is waiting on; answer them with relay_send.
+        ...(isNeedsInput(job) && job.needsInput ? { needsInput: job.needsInput } : {}),
         ...(job.native?.sessionId ? { native: { sessionId: job.native.sessionId } } : {}),
         ...(job.takeover ? { takeover: job.takeover } : {}),
         turns: turnsOf(job).map(turn => ({
@@ -1202,8 +1303,10 @@ export function createRelay({
         delete draft.integrationAt;
       });
       let worktreeRemoved = true;
+      let leftover;
       try {
-        await removeWorktree(r, job.id);
+        ({ leftover } = await removeWorktree(r, job.id));
+        if (leftover) worktreeRemoved = false;
       } catch {
         worktreeRemoved = false;
       }
@@ -1212,6 +1315,7 @@ export function createRelay({
         applied: true,
         files: reserved.changedFiles ?? [],
         worktreeRemoved,
+        ...(leftover ? { warnings: [leftoverWarning(r, leftover)] } : {}),
         note: 'The changes are in your working tree, unstaged. Review and commit them.',
       };
     },
@@ -1232,8 +1336,9 @@ export function createRelay({
         draft.integrationPid = process.pid;
         draft.integrationAt = new Date().toISOString();
       });
+      let leftover;
       try {
-        await removeWorktree(r, job.id);
+        ({ leftover } = await removeWorktree(r, job.id));
       } catch (err) {
         await store.update(job.id, draft => {
           draft.integration = 'none';
@@ -1248,7 +1353,7 @@ export function createRelay({
         delete draft.integrationPid;
         delete draft.integrationAt;
       });
-      return { jobId: job.id, discarded: true };
+      return { jobId: job.id, discarded: true, ...(leftover ? { warnings: [leftoverWarning(r, leftover)] } : {}) };
     },
 
     async relay_cancel(args) {

@@ -20,8 +20,9 @@ import { notRun, redactText, runChecks, runProcess, verdict } from './checks.mjs
 import { loadConfig } from './config.mjs';
 import { locateExecutor } from './discovery.mjs';
 import {
-  adapterFor, buildFollowUpPrompt, buildPrompt, childEnv, dshCapabilities, normalizeUsage, SESSION_ID, spawnArgv,
+  adapterFor, buildFollowUpPrompt, buildPrompt, childEnv, dshCapabilities, normalizeUsage, SESSION_ID, spawnArgv, turnUsage,
 } from './executors.mjs';
+import { CODEXHOST_ENV, envFor } from './codexhost.mjs';
 import { checkBranch, collectChanges } from './git.mjs';
 import { outOfScope } from './policy.mjs';
 import { createStore, HEARTBEAT_MS, TERMINAL } from './store.mjs';
@@ -56,6 +57,20 @@ function removeFile(file) {
   } catch {
     // not there
   }
+}
+
+/** A driven run's report with credential values passed by name replaced by [redacted]. */
+function redactParsed(parsed, redact) {
+  if (!redact.length) return parsed;
+  const clean = value => (typeof value === 'string' ? redactText(value, redact) : value);
+  return {
+    ...parsed,
+    summary: clean(parsed.summary),
+    error: clean(parsed.error),
+    ...(parsed.needsInput
+      ? { needsInput: { questions: parsed.needsInput.questions.map(q => ({ ...q, text: clean(q.text), ...(q.options ? { options: q.options.map(clean) } : {}) })) } }
+      : {}),
+  };
 }
 
 /** Warnings that belong to the dispatch, not to one turn's audit. */
@@ -165,9 +180,11 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
       const cfg = { ...executorConfig, command: located.command };
       const caps = job.executor === 'dsh' ? dshCapabilities(cfg.command, { env: executorEnv, platform }) : {};
       const runFiles = { final: turnFiles.final };
+      if (turn.kind === 'send' && !job.native?.sessionId) throw fail('resume-unsupported', `Job ${jobId} has no ${job.executor} session to continue`);
       let invocation;
-      if (turn.kind === 'send') {
-        if (!job.native?.sessionId) throw fail('resume-unsupported', `Job ${jobId} has no ${job.executor} session to continue`);
+      if (adapter.drive) {
+        // driven below
+      } else if (turn.kind === 'send') {
         invocation = adapter.resume(job, cfg, runFiles, buildFollowUpPrompt(job, turn), job.native.sessionId, caps);
       } else {
         invocation = adapter.invocation(job, cfg, runFiles, buildPrompt(job), caps);
@@ -178,41 +195,69 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
         if (located.discovered) draft.executorPath = located.command;
       });
       store.appendEvent(jobId, { type: 'executor-started', executor: job.executor, turn: turn.n, kind: turn.kind });
-      const launch = spawnArgv(invocation.argv, { env: executorEnv, platform });
       // A session id is saved the moment the executor prints it, so a worker
       // that is lost mid-run (a reboot, a crash) still leaves a session to continue.
       let seenSession = job.native?.sessionId;
       let saving = Promise.resolve();
-      const run = await runProcess({
-        argv: launch.argv,
-        cwd: worktree,
-        env: { ...executorEnv, ...launch.env, ...(invocation.env ?? {}) },
-        stdin: invocation.stdin,
-        timeoutMs: job.timeoutMinutes * 60_000,
-        logFile: turnFiles.executorLog,
-        signal,
-        redact,
-        platform,
-        onStdoutLine: line => {
-          const id = adapter.sessionFromLine(line);
-          if (!id || id === seenSession || !SESSION_ID.test(id)) return;
-          seenSession = id;
-          saving = saving
-            .then(() => store.update(jobId, draft => {
-              draft.native = { ...(draft.native ?? {}), sessionId: id };
-            }))
-            .catch(() => {});
-        },
-      });
+      const saveSession = id => {
+        if (!id || id === seenSession || !SESSION_ID.test(id)) return saving;
+        seenSession = id;
+        saving = saving
+          .then(() => store.update(jobId, draft => {
+            draft.native = { ...(draft.native ?? {}), sessionId: id };
+          }))
+          .catch(() => {});
+        return saving;
+      };
+      let run;
+      if (adapter.drive) {
+        const driveEnv = envFor(executorEnv, env);
+        const driven = await adapter.drive({
+          job,
+          cfg,
+          prompt: turn.kind === 'send' ? buildFollowUpPrompt(job, turn) : buildPrompt(job),
+          sessionId: turn.kind === 'send' ? job.native.sessionId : undefined,
+          // An answer to a question has to stop the turn that asked it.
+          interrupt: turn.kind === 'send' && (turn.interrupted === true || turn.answers === true),
+          cwd: worktree,
+          env: driveEnv,
+          signal,
+          timeoutMs: job.timeoutMinutes * 60_000,
+          logFile: turnFiles.executorLog,
+          redact: [...redact, ...CODEXHOST_ENV.filter(name => /TOKEN$/.test(name)).map(name => driveEnv[name]).filter(Boolean)],
+          platform,
+          onSession: saveSession,
+        });
+        run = driven.run;
+        parsed = redactParsed(driven.parsed, redact);
+      } else {
+        const launch = spawnArgv(invocation.argv, { env: executorEnv, platform });
+        run = await runProcess({
+          argv: launch.argv,
+          cwd: worktree,
+          env: { ...executorEnv, ...launch.env, ...(invocation.env ?? {}) },
+          stdin: invocation.stdin,
+          timeoutMs: job.timeoutMinutes * 60_000,
+          logFile: turnFiles.executorLog,
+          signal,
+          redact,
+          platform,
+          onStdoutLine: line => {
+            saveSession(adapter.sessionFromLine(line));
+          },
+        });
+      }
       await saving;
 
       // An executor may write its final message itself (codex -o): scrub it too.
       const written = readIfExists(turnFiles.final);
       const finalText = redactText(written, redact);
       if (finalText !== written) fs.writeFileSync(turnFiles.final, finalText);
-      parsed = run.spawnError
-        ? { ok: false, summary: '', error: `Could not start ${invocation.argv[0]}: ${run.spawnError.code ?? run.spawnError.message}` }
-        : adapter.parse({ exitCode: run.exitCode, stdout: run.stdout, stderr: run.stderr, finalText, caps });
+      if (!adapter.drive) {
+        parsed = run.spawnError
+          ? { ok: false, summary: '', error: `Could not start ${invocation.argv[0]}: ${run.spawnError.code ?? run.spawnError.message}` }
+          : adapter.parse({ exitCode: run.exitCode, stdout: run.stdout, stderr: run.stderr, finalText, caps });
+      }
       if (!finalText && parsed.summary) fs.writeFileSync(turnFiles.final, `${parsed.summary}\n`);
       timedOut = run.timedOut;
       cancelled = run.cancelled;
@@ -229,6 +274,7 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
         normalizedUsage: normalizeUsage(job.executor, parsed),
         costUsd: parsed.costUsd,
         error: run.timedOut ? `The executor timed out after ${job.timeoutMinutes} min` : parsed.error,
+        ...(parsed.errorCode ? { errorCode: parsed.errorCode } : {}),
       };
       if (sessionId && sessionId !== job.native?.sessionId) {
         await store.update(jobId, draft => {
@@ -316,10 +362,14 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
         if (draft.baseWarnings === undefined) draft.baseWarnings = baseWarningsOf(job);
         draft.warnings = [...draft.baseWarnings, ...audit];
         delete draft.error;
+        delete draft.needsInput;
         if (outcome.status === 'failed') {
           draft.error = executorOk
             ? { code: 'checks-failed', message: 'At least one check failed.' }
-            : { code: timedOut ? 'executor-timeout' : 'executor-failed', message: executorRun?.error ?? 'The executor failed.' };
+            : { code: timedOut ? 'executor-timeout' : executorRun?.errorCode ?? 'executor-failed', message: executorRun?.error ?? 'The executor failed.' };
+          // The executor stopped on a question: the job is waiting for an
+          // answer (relay_send) rather than broken.
+          if (draft.error.code === 'needs-input' && parsed.needsInput) draft.needsInput = parsed.needsInput;
         }
         if (outcome.status === 'cancelled') draft.error = { code: 'cancelled', message: 'The job was cancelled.' };
         // Handing back ends a takeover; the job is the relay's again.
@@ -329,7 +379,9 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
         entry.changedFiles = changes.files.length;
         if (executorRun) {
           entry.durationMs = executorRun.durationMs;
-          if (Object.keys(executorRun.normalizedUsage ?? {}).length) entry.usage = executorRun.normalizedUsage;
+          const own = turnUsage(job.executor, executorRun.normalizedUsage, draft.turns.slice(0, -1), { resumed: turn.kind !== 'dispatch' });
+          if (own.usage && Object.keys(own.usage).length) entry.usage = own.usage;
+          if (own.sessionUsage) entry.sessionUsage = own.sessionUsage;
         }
       },
       { type: 'finished', status: outcome.status, verification: outcome.verification, changed: changes.files.length, outOfScope: strays.length },

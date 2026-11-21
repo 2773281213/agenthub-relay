@@ -2,7 +2,7 @@
 // conflicts between concurrent write jobs, reserved executors and the
 // executor role. Every decision here is a pure function of its inputs.
 
-import { MODEL_NAME, MODEL_NAME_RULE, RESERVED, TIERS, WRITE_TIERS } from './config.mjs';
+import { HARNESS_NAME, MODEL_NAME, MODEL_NAME_RULE, RESERVED, splitHarness, TIERS, WRITE_TIERS } from './config.mjs';
 
 export const MAX_TASK_CHARS = 100_000;
 export const MAX_CHECKS = 20;
@@ -78,12 +78,32 @@ export function holdsScope(job) {
   const integration = job.integration ?? 'none';
   if (RESERVED_INTEGRATIONS.has(integration)) return true;
   if (integration !== 'none') return false;
-  return job.status === 'completed' || Boolean(job.takeover);
+  // A job waiting for an answer still has a live Thread that may write.
+  return job.status === 'completed' || Boolean(job.takeover) || isNeedsInput(job);
 }
 
-/** Whether the caller runs as an agenthub-relay executor, which may not plan. */
-export function isExecutorCaller(env = {}) {
-  return env.AGENTHUB_RELAY_ROLE === 'executor';
+/** Whether a job's turn stopped on a question the executor asked (codexhost). */
+export function isNeedsInput(job) {
+  return job?.status === 'failed' && job.error?.code === 'needs-input';
+}
+
+/**
+ * Whether the caller runs as an agenthub-relay executor, which may not plan:
+ * marked with AGENTHUB_RELAY_ROLE, or (a codexhost harness, which the Host
+ * starts without the relay's environment) running in the Thread of a codexhost
+ * job that is running or waiting for an answer. codexhost exports
+ * CODEXHOST_THREAD_ID to its harnesses, and only CODEX_THREAD_ID to a native
+ * Codex Thread it manages.
+ */
+export function isExecutorCaller(env = {}, jobs = []) {
+  if (env.AGENTHUB_RELAY_ROLE === 'executor') return true;
+  const threads = [env.CODEXHOST_THREAD_ID, env.CODEX_THREAD_ID].filter(id => typeof id === 'string' && id !== '');
+  if (threads.length === 0) return false;
+  return jobs.some(job =>
+    job.executor === 'codexhost'
+    && threads.includes(job.native?.sessionId)
+    && (LIVE.has(job.status) || isNeedsInput(job))
+    && !['applied', 'discarded'].includes(job.integration ?? 'none'));
 }
 
 /** The first other job whose claimed scope overlaps `job`'s, with the overlapping entries. */
@@ -197,6 +217,14 @@ function selectModel({ request, route, executor, executorConfig, agentDefault })
   return { model, effort };
 }
 
+function cleanHarness(value) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string' || !HARNESS_NAME.test(value)) {
+    throw new PolicyError('invalid-request', 'harness must be a codexhost harness id (letters, digits, . _ -), as "codexhost harness list" prints it');
+  }
+  return value;
+}
+
 function defaultTitle(task) {
   const line = task.split('\n').find(text => text.trim() !== '') ?? task;
   const title = line.trim();
@@ -274,7 +302,8 @@ export function planDispatch({ request, config, jobs = [], role, session, caller
   const write = WRITE_TIERS.has(tier);
 
   const route = (session?.routes ?? config.routes)?.[tier];
-  const executor = request.executor ?? route?.executor ?? config.mapping[tier];
+  const named = typeof request.executor === 'string' ? splitHarness(request.executor) : {};
+  const executor = named.executor ?? route?.executor ?? config.mapping[tier];
   if (RESERVED[executor]) {
     throw new PolicyError('reserved-executor', RESERVED[executor], { executor });
   }
@@ -338,6 +367,20 @@ export function planDispatch({ request, config, jobs = [], role, session, caller
     agentDefault: agentDefaults[executor],
   });
 
+  // A codexhost job runs on one harness: the request's, else the tier
+  // route's (when it routes to codexhost), else executors.codexhost.harness.
+  const fromRoute = route?.executor === executor ? route : {};
+  const harness = cleanHarness(named.harness ?? request.harness) ?? fromRoute.harness ?? config.executors[executor].harness;
+  if (executor === 'codexhost' && harness === undefined) {
+    throw new PolicyError(
+      'harness-required',
+      'A codexhost job needs a harness: name it as executor "codexhost/<harness>" (or harness), in the tier\'s route, or with "config set executors.codexhost.harness <id>"; "codexhost harness list" lists them.',
+    );
+  }
+  if (executor !== 'codexhost' && harness !== undefined) {
+    throw new PolicyError('invalid-request', `harness applies to the codexhost executor only, not ${executor}`);
+  }
+
   let timeoutMinutes = config.executors[executor].timeoutMinutes;
   if (request.timeoutMinutes !== undefined) {
     const value = request.timeoutMinutes;
@@ -352,6 +395,7 @@ export function planDispatch({ request, config, jobs = [], role, session, caller
     tier,
     write,
     executor,
+    ...(harness !== undefined ? { harness } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(effort !== undefined ? { effort } : {}),
     scope: effectiveScope,

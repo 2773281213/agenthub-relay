@@ -179,6 +179,13 @@ export function turnNumber(job) {
   return turnsOf(job).at(-1).n;
 }
 
+/** Whether the latest turn's result has been read with relay_result. */
+export function resultFetched(job) {
+  if (Number.isInteger(job.resultFetchedTurn)) return job.resultFetchedTurn >= turnNumber(job);
+  // A record from before turns: read once is read.
+  return !Array.isArray(job.turns) && Boolean(job.resultFetchedAt);
+}
+
 function lastTurnKind(job) {
   return Array.isArray(job.turns) ? job.turns.at(-1)?.kind : undefined;
 }

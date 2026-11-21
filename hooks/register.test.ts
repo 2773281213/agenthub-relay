@@ -6,7 +6,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { decide, mentionContext, mentionRows, mentionsIn } from './register'
+import { decide, mentionContext, mentionRows, mentionsIn, wakeText } from './register'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -325,4 +325,10 @@ test('/relay reports the state and /relay off pauses keep-alive', async ($, on) 
   expect(off.text).toContain('paused (off)')
   await w.minutes(60)
   expect(w.seen.forks).toBe(0)
+})
+
+test('a job waiting for an answer reads as waiting, not as failed', () => {
+  const text = wakeText([{ id: 'j3', status: 'failed', needsInput: true, executor: 'codexhost', tier: 'deep', turn: 2, title: 'migrate' }])
+  expect(text).toContain('j3 (codexhost, deep) is waiting for your answer (turn 2): migrate')
+  expect(text).not.toContain('ended failed')
 })

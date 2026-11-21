@@ -13,7 +13,7 @@ import path from 'node:path';
 import { envValue, resolveCommand } from './platform.mjs';
 
 /** The command names discovery applies to; any other configured command is used as is. */
-export const DEFAULT_COMMANDS = Object.freeze({ codex: 'codex', claude: 'claude', dsh: 'dsh', agy: 'agy' });
+export const DEFAULT_COMMANDS = Object.freeze({ codex: 'codex', claude: 'claude', dsh: 'dsh', agy: 'agy', codexhost: 'codexhost' });
 
 /** Where Windows records the install folder of each packaged (MSIX/AppX) app. */
 const APPX_PACKAGES_KEY = 'HKCU\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages';
@@ -69,6 +69,31 @@ export function codexPackageRoots({ spawnSync = nodeSpawnSync } = {}) {
   return roots.sort().reverse();
 }
 
+/**
+ * Where the running codexhost Host was started from: its data folder
+ * (CODEXHOST_DATA_DIR, else ~/.codexhost) records the Host runtime's path in
+ * shared-host-ready.json, and the CLI sits in bin/ under the same install.
+ */
+export function codexhostInstallCandidates({ env = process.env, platform = process.platform } = {}) {
+  const windows = platform === 'win32';
+  const named = envValue(env, 'CODEXHOST_CLI_PATH', platform);
+  const home = envValue(env, windows ? 'USERPROFILE' : 'HOME', platform) ?? envValue(env, 'HOME', platform);
+  const dataDir = envValue(env, 'CODEXHOST_DATA_DIR', platform) ?? (home ? path.join(home, '.codexhost') : undefined);
+  const found = named ? [named] : [];
+  if (dataDir) {
+    try {
+      const ready = JSON.parse(fs.readFileSync(path.join(dataDir, 'shared-host-ready.json'), 'utf8'));
+      if (typeof ready.runtime === 'string' && ready.runtime) {
+        const root = path.dirname(path.dirname(path.normalize(ready.runtime)));
+        found.push(path.join(root, 'bin', windows ? 'codexhost.exe' : 'codexhost'));
+      }
+    } catch {
+      // no Host has run from this data folder
+    }
+  }
+  return found;
+}
+
 /** The install locations tried for an executor, most likely first. */
 export function installCandidates(id, { env = process.env, platform = process.platform, spawnSync = nodeSpawnSync } = {}) {
   const windows = platform === 'win32';
@@ -95,6 +120,8 @@ export function installCandidates(id, { env = process.env, platform = process.pl
         : fromHome('.local', 'bin', 'agy');
     case 'dsh':
       return windows ? [...fromHome('.dsh', 'bin', 'dsh.cmd'), ...fromHome('.dsh', 'bin', 'dsh.exe')] : fromHome('.dsh', 'bin', 'dsh');
+    case 'codexhost':
+      return codexhostInstallCandidates({ env, platform });
     default:
       return [];
   }
@@ -117,7 +144,7 @@ export function locateExecutor(id, command, { env = process.env, platform = proc
   if (resolved || command !== DEFAULT_COMMANDS[id] || envValue(env, 'AGENTHUB_RELAY_DISCOVERY', platform) === 'off') {
     return { command, resolved, discovered: false };
   }
-  const key = JSON.stringify([id, platform, envValue(env, 'USERPROFILE', platform), envValue(env, 'HOME', platform), envValue(env, 'LOCALAPPDATA', platform)]);
+  const key = JSON.stringify([id, platform, envValue(env, 'USERPROFILE', platform), envValue(env, 'HOME', platform), envValue(env, 'LOCALAPPDATA', platform), envValue(env, 'CODEXHOST_CLI_PATH', platform), envValue(env, 'CODEXHOST_DATA_DIR', platform)]);
   const hit = cache.get(key);
   if (hit && now - hit.at < CACHE_MS && (hit.found === null || isFile(hit.found.command))) return hit.found ?? { command, resolved: null, discovered: false };
   let found = null;

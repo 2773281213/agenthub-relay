@@ -84,6 +84,8 @@ export type RelayJob = {
   takenOver?: boolean
   resumable?: boolean
   model?: string
+  /** The turn stopped on a question the executor asked (codexhost): answer it with relay_send. */
+  needsInput?: boolean
 }
 
 /** One turn of one job: a follow-up turn wakes the session again. */
@@ -197,7 +199,8 @@ export function wakeText(jobs: RelayJob[]): string {
   const lines = jobs.map(job => {
     const checks = job.verification ? `, checks ${job.verification}` : ''
     const turn = (job.turn ?? 1) > 1 ? ` (turn ${job.turn})` : ''
-    return `- ${job.id} (${job.executor ?? '?'}, ${job.tier ?? '?'}) ended ${job.status}${checks}${turn}: ${job.title ?? ''}`
+    const how = job.needsInput ? 'is waiting for your answer' : `ended ${job.status}${checks}`
+    return `- ${job.id} (${job.executor ?? '?'}, ${job.tier ?? '?'}) ${how}${turn}: ${job.title ?? ''}`
   })
   return [
     `[agenthub-relay] ${jobs.length === 1 ? 'A job you dispatched has' : `${jobs.length} jobs you dispatched have`} ended. Read each job's result, then continue your task:`,
