@@ -1,7 +1,13 @@
 // The relay_* tools: the one entrance for every planner, whichever agent it
 // is. Each tool takes plain JSON and returns plain JSON; errors carry a code.
+//
+// A job is a conversation with one executor in its own worktree: dispatch
+// starts it, send continues the same native session, takeover hands it to a
+// person in the executor's own app or terminal, and collect hands it back to
+// be checked again. Apply and discard end it.
 
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,21 +15,27 @@ import { fileURLToPath } from 'node:url';
 import {
   configLayers, configPath, EXECUTOR_IDS, loadConfig, parseRoute, PLANNER_IDS, plannerFromName, RESERVED, TIERS, userConfigPath, writeSettings,
 } from './config.mjs';
-import { describeExecutors } from './executors.mjs';
-import { addWorktree, applyPatch, ensureExcluded, removeWorktree, repoRoot, snapshotBase } from './git.mjs';
+import { executorCommand } from './discovery.mjs';
+import { adapterFor, describeExecutors, displayCommand, SESSION_ID } from './executors.mjs';
+import { addWorktree, applyPatch, ensureExcluded, patchIsApplied, removeWorktree, repoRoot, snapshotBase } from './git.mjs';
 import { ACCEPTED, agentDefaults, assertRoute, catalogFor, checkRoute, MODEL_AGENTS } from './models.mjs';
-import { workerSpawnOptions } from './platform.mjs';
-import { planDispatch } from './policy.mjs';
+import { openDetached, workerSpawnOptions } from './platform.mjs';
+import { holdsScope, isExecutorCaller, planDispatch, planSend, scopeConflict } from './policy.mjs';
 import { createSessionStore, describeTiers, isSessionId, newSessionId, plainRoute, routeText } from './session.mjs';
-import { createStore, isAlive, isJobId, newJobId, TERMINAL } from './store.mjs';
+import {
+  createStore, isAbandonedReservation, isAlive, isJobId, LIVE, newJobId, RESERVATIONS, TERMINAL, turnNumber, turnsOf,
+} from './store.mjs';
 
-export const VERSION = '0.4.0';
+export const VERSION = '0.5.0';
 export const MAX_WAIT_SECONDS = 50;
 /** A watcher counts as active while it polled this recently. */
 export const WATCHER_ACTIVE_MS = 3 * 60_000;
+/** How long send with interrupt, and takeover with stop, wait for the running turn to end. */
+export const STOP_WAIT_MS = 30_000;
 
 const CLI = fileURLToPath(new URL('./cli.mjs', import.meta.url));
 const POLL_MS = 500;
+const MAX_LISTED_MESSAGE_CHARS = 500;
 
 function fail(code, message, details) {
   return Object.assign(new Error(message), { code }, details === undefined ? {} : { details });
@@ -33,11 +45,13 @@ const jobIdSchema = { type: 'string', description: 'A job id returned by relay_d
 
 const routeSchema = { type: 'string', description: 'executor[:model][@effort], for example claude:opus@high, codex:gpt-5.1-codex@medium or dsh.' };
 
+const sessionSchema = { type: 'string', description: "The confirmed session id; defaults to this connection's session." };
+
 export const TOOLS = Object.freeze([
   {
     name: 'relay_agents',
     description:
-      'List the executors (codex, claude, dsh, agy; acp is reserved), whether each is installed, which planner you are taken to be, the active profile and why, the executor, model and effort each tier goes to, each agent\'s own default model, and the current planner session.',
+      'List the executors (codex, claude, dsh, agy; acp is reserved), whether each is installed (found on PATH or in its usual install folder), which planner you are taken to be, the active profile and why, the executor, model and effort each tier goes to, each agent\'s own default model, and the current planner session.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -83,30 +97,72 @@ export const TOOLS = Object.freeze([
       'Hand a job to another agent, inside a planner session confirmed with relay_session. It runs in its own git worktree; your working tree changes only when you call relay_apply.',
       'Tiers: deep = complex or multi-file work (scope required, "." for the whole repository); light = simple, clearly specified work (1-10 scope paths and at least one check command required); review = read-only investigation.',
       'Write a self-contained task: the goal, the relevant files, constraints and how to verify. Checks are shell commands run in the worktree afterwards; exit 0 passes.',
-      'If the result says watcher.active, end your turn: you will be woken when the job ends. Otherwise poll with relay_wait.',
+      'If the result says watcher.active, end your turn: you will be woken when the job ends. Otherwise poll with relay_wait. The result\'s next lists what you can do from here.',
     ].join(' '),
     inputSchema: {
       type: 'object',
       properties: {
         task: { type: 'string', description: 'What the executor should do, self-contained.' },
         tier: { type: 'string', enum: [...TIERS] },
-        session: { type: 'string', description: "The confirmed session id; defaults to this connection's session." },
-        executor: { type: 'string', description: 'Override the session\'s route: codex, claude or dsh.' },
-        model: { type: 'string', description: "Model for this job, checked and passed through the executor's own flag (codex -m, claude --model); dsh uses its own settings and refuses one." },
-        effort: { type: 'string', description: 'Reasoning effort for this job (codex model_reasoning_effort, claude --effort).' },
+        session: sessionSchema,
+        executor: { type: 'string', description: 'Override the session\'s route: codex, claude, dsh or agy.' },
+        model: { type: 'string', description: "Model for this job, checked and passed through the executor's own flag (codex -m, claude --model, agy --model); dsh uses its own settings and refuses one." },
+        effort: { type: 'string', description: 'Reasoning effort for this job (codex model_reasoning_effort, claude --effort, agy --effort).' },
         scope: { type: 'array', items: { type: 'string' }, description: 'Project-relative files or directories the job may change.' },
-        checks: { type: 'array', items: { type: 'string' }, description: 'Shell commands that verify the work; run in the worktree after the executor.' },
+        checks: { type: 'array', items: { type: 'string' }, description: 'Shell commands that verify the work; run in the worktree after the executor, and again after every later turn.' },
         title: { type: 'string', description: 'A short label for status lists.' },
         acceptance: { type: 'string', description: 'Acceptance criteria shown to the executor.' },
-        timeoutMinutes: { type: 'number', description: "Stop the executor after this many minutes (default: the executor's setting)." },
+        timeoutMinutes: { type: 'number', description: "Stop the executor after this many minutes, each turn (default: the executor's setting)." },
       },
       required: ['task', 'tier'],
       additionalProperties: false,
     },
   },
   {
+    name: 'relay_send',
+    description: [
+      "Continue a finished job in the same executor session, in the same worktree: ask for fixes after reviewing it, answer a question its summary asked, or resume one that was interrupted (a timeout, a lost worker, a reboot).",
+      'The executor keeps its context; its checks run again and the patch is the whole change since the job began. A running job needs interrupt: true, which stops the current turn first (nothing is sent if it does not stop within 30 seconds).',
+      'Refused once the job is applied or discarded, while it is taken over (relay_collect first), or when the executor left no session to continue.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: jobIdSchema,
+        message: { type: 'string', description: 'What to tell the executor, self-contained for this turn.' },
+        interrupt: { type: 'boolean', description: 'Stop a running turn first, then send.' },
+        force: { type: 'boolean', description: 'Send to a taken-over job anyway (ends the takeover).' },
+        session: sessionSchema,
+      },
+      required: ['jobId', 'message'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'relay_takeover',
+    description: [
+      "Hand a job to a person: returns how to open its executor's own session in the job's worktree, in the executor's desktop app where it has one (Claude Code: the Claude desktop app; Codex: a codex:// link) and in a terminal.",
+      'open: true opens the app. A running job needs stop: true, which stops its headless turn first. While a job is taken over the relay sends it nothing; hand it back with relay_collect when the person is done, so its checks run and its patch is collected again.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: jobIdSchema,
+        stop: { type: 'boolean', description: 'Stop a running turn first.' },
+        open: { type: 'boolean', description: "Open the session in the executor's desktop app now." },
+      },
+      required: ['jobId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'relay_collect',
+    description: 'Hand a job back after a takeover (or collect its changes again after a collection failed): runs its checks and collects the patch from its worktree in the background, as a new turn without the executor. Wait for it like any job.',
+    inputSchema: { type: 'object', properties: { jobId: jobIdSchema, session: sessionSchema }, required: ['jobId'], additionalProperties: false },
+  },
+  {
     name: 'relay_status',
-    description: 'Show one job (jobId) or all jobs that are not discarded. watch: true marks this planner session as watched, for a planner-side watcher such as the Claude Code mod.',
+    description: 'Show one job (jobId) or all jobs that are not discarded, with their turn and what can be done next. watch: true marks this planner session as watched, for a planner-side watcher such as the Claude Code mod.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -131,13 +187,13 @@ export const TOOLS = Object.freeze([
   },
   {
     name: 'relay_result',
-    description: "A finished job's summary, changed files, out-of-scope files, checks, patch stat and log paths. Read it before relay_apply or relay_discard.",
+    description: "A finished job's summary, changed files, out-of-scope files, checks, patch stat, its turns, its executor session and log paths, and what to do next. Read it before relay_apply, relay_send or relay_discard.",
     inputSchema: { type: 'object', properties: { jobId: jobIdSchema }, required: ['jobId'], additionalProperties: false },
   },
   {
     name: 'relay_apply',
     description:
-      "Apply a completed job's patch to your working tree (unstaged) and remove its worktree. Out-of-scope changes need allowOutOfScope: true; a failed or cancelled job needs force: true.",
+      "Apply a completed job's patch to your working tree (unstaged) and remove its worktree. Out-of-scope changes need allowOutOfScope: true; a failed or cancelled job needs force: true; a taken-over job must be handed back with relay_collect first.",
     inputSchema: {
       type: 'object',
       properties: { jobId: jobIdSchema, allowOutOfScope: { type: 'boolean' }, force: { type: 'boolean' } },
@@ -147,12 +203,12 @@ export const TOOLS = Object.freeze([
   },
   {
     name: 'relay_discard',
-    description: "Drop a finished job's changes: remove its worktree and branch.",
-    inputSchema: { type: 'object', properties: { jobId: jobIdSchema }, required: ['jobId'], additionalProperties: false },
+    description: "Drop a finished job's changes: remove its worktree and branch. A taken-over job needs force: true, since a person may still be working in it.",
+    inputSchema: { type: 'object', properties: { jobId: jobIdSchema, force: { type: 'boolean' } }, required: ['jobId'], additionalProperties: false },
   },
   {
     name: 'relay_cancel',
-    description: 'Stop a queued or running job; it ends cancelled and its checks are not run.',
+    description: 'Stop a queued or running job; it ends cancelled and its checks are not run. Its executor session and worktree stay, so relay_send can continue it later.',
     inputSchema: { type: 'object', properties: { jobId: jobIdSchema }, required: ['jobId'], additionalProperties: false },
   },
 ]);
@@ -179,7 +235,27 @@ export function startWorkerProcess(root, jobId, env, workerLog) {
   }
 }
 
+/** Whether the latest turn's result has been read with relay_result. */
+export function resultFetched(job) {
+  if (Number.isInteger(job.resultFetchedTurn)) return job.resultFetchedTurn >= turnNumber(job);
+  // A record from before turns: read once is read.
+  return !Array.isArray(job.turns) && Boolean(job.resultFetchedAt);
+}
+
+/** Token and cost figures summed over the job's turns, when its executor reports them per run. */
+function usageTotals(job) {
+  const totals = {};
+  for (const turn of turnsOf(job)) {
+    for (const [key, value] of Object.entries(turn.usage ?? {})) {
+      if (typeof value === 'number' && Number.isFinite(value)) totals[key] = (totals[key] ?? 0) + value;
+    }
+  }
+  if (totals.costUsd !== undefined) totals.costUsd = Math.round(totals.costUsd * 1e6) / 1e6;
+  return Object.keys(totals).length ? totals : undefined;
+}
+
 function summarize(job) {
+  const usage = usageTotals(job);
   return {
     id: job.id,
     title: job.title,
@@ -194,11 +270,53 @@ function summarize(job) {
     model: job.model,
     effort: job.effort,
     ...(job.session ? { session: job.session } : {}),
+    turn: turnNumber(job),
+    ...(job.takeover ? { takenOver: true } : {}),
+    resumable: Boolean(job.native?.sessionId),
     changedFiles: job.changedFiles?.length,
     outOfScope: job.outOfScope?.length,
-    resultFetched: Boolean(job.resultFetchedAt),
+    resultFetched: resultFetched(job),
+    ...(usage ? { usage } : {}),
     error: job.error?.code,
   };
+}
+
+function hint(tool, cli, why) {
+  return { ...(tool ? { tool } : {}), ...(cli ? { cli } : {}), why };
+}
+
+/**
+ * What a planner can do with a job from here, most useful first: each with
+ * the relay_* tool, the same command for the bundled CLI, and why.
+ */
+export function nextFor(job, { watcherActive = false } = {}) {
+  const id = job.id;
+  const integration = job.integration ?? 'none';
+  if (integration === 'applied' || integration === 'discarded') return [];
+  if (RESERVATIONS.has(integration)) return [hint('relay_status', `status ${id}`, `an ${integration === 'applying' ? 'apply' : 'discard'} is in progress`)];
+  if (LIVE.has(job.status)) {
+    return [
+      watcherActive
+        ? hint(null, null, 'end your turn: you are woken when the job ends')
+        : hint('relay_wait', `wait ${id}`, 'wait for this turn to end'),
+      hint('relay_send', `send ${id} --interrupt --message-file -`, 'stop this turn and redirect the same session'),
+      hint('relay_takeover', `takeover ${id} --stop`, "stop it and continue it yourself in the executor's own app"),
+      hint('relay_cancel', `cancel ${id}`, 'stop it; its session stays for a later send'),
+    ];
+  }
+  if (job.takeover) {
+    return [
+      hint('relay_collect', `collect ${id}`, 'hand it back once the interactive session is closed: its checks run and its patch is collected again'),
+      hint('relay_discard', `discard ${id} --force`, 'drop it and its worktree'),
+    ];
+  }
+  const next = [];
+  if (!resultFetched(job)) next.push(hint('relay_result', `result ${id}`, 'read the summary, checks and changes first'));
+  if (job.write && job.status === 'completed') next.push(hint('relay_apply', `apply ${id}`, 'apply the patch to your working tree'));
+  if (job.native?.sessionId) next.push(hint('relay_send', `send ${id} --message-file -`, 'ask the same session for changes, or to continue; it keeps its context'));
+  if (job.native?.sessionId) next.push(hint('relay_takeover', `takeover ${id}`, "continue it yourself in the executor's own app or terminal"));
+  next.push(hint('relay_discard', `discard ${id}`, 'drop it'));
+  return next;
 }
 
 function sleep(ms, signal) {
@@ -219,6 +337,15 @@ function sleep(ms, signal) {
   });
 }
 
+/** A path relative to the repository, with forward slashes on every platform (records and results read the same everywhere). */
+function relativePath(root, file) {
+  return path.relative(root, file).split(path.sep).join('/');
+}
+
+function clipText(text, max) {
+  return typeof text === 'string' && text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
 /**
  * The relay for one planner session.
  *
@@ -230,6 +357,7 @@ function sleep(ms, signal) {
  * @param {string} [options.planner] the planner's id, as given on the command line
  * @param {number} [options.maxWaitSeconds] the longest relay_wait (MCP clients time out tool calls)
  * @param {string} [options.platform] process.platform; on Windows relay_cancel sends no signal
+ * @param {Function} [options.open] how a takeover opens its target (platform.openDetached)
  */
 export function createRelay({
   cwd = process.cwd(),
@@ -239,6 +367,7 @@ export function createRelay({
   planner,
   maxWaitSeconds = MAX_WAIT_SECONDS,
   platform = process.platform,
+  open = openDetached,
 } = {}) {
   let rootPromise;
   let watcherSeenAt;
@@ -268,13 +397,172 @@ export function createRelay({
     return { active: now - watcherSeenAt <= WATCHER_ACTIVE_MS, lastSeenAt: new Date(watcherSeenAt).toISOString() };
   }
 
+  function refuseExecutor(what) {
+    if (isExecutorCaller(env)) {
+      throw fail('executor-role', `This process runs as an agenthub-relay executor (AGENTHUB_RELAY_ROLE=executor); executors may not ${what}.`);
+    }
+  }
+
+  /**
+   * An apply or discard whose process died mid-way: an apply whose patch is
+   * wholly in the working tree is recorded as applied, otherwise the job is
+   * unintegrated again; a discard is finished.
+   */
+  async function recoverReservation(r, store, job) {
+    const p = store.paths(job.id);
+    const at = new Date().toISOString();
+    if (job.integration === 'applying') {
+      const applied = await patchIsApplied(r, p.patch).catch(() => false);
+      const updated = await store.update(job.id, draft => {
+        if (draft.integration !== 'applying' || !isAbandonedReservation(draft)) return draft;
+        draft.integration = applied ? 'applied' : 'none';
+        if (applied) draft.appliedAt = at;
+        delete draft.integrationPid;
+        delete draft.integrationAt;
+        draft.warnings = [
+          ...(draft.warnings ?? []),
+          applied
+            ? 'An apply was interrupted after its patch reached the working tree; it is recorded as applied.'
+            : 'An apply was interrupted before its patch reached the working tree; the job is unintegrated again.',
+        ];
+        return draft;
+      }).catch(() => store.read(job.id));
+      if (updated.integration === 'applied') await removeWorktree(r, job.id).catch(() => {});
+      return updated;
+    }
+    await removeWorktree(r, job.id).catch(() => {});
+    return store.update(job.id, draft => {
+      if (draft.integration !== 'discarding' || !isAbandonedReservation(draft)) return draft;
+      draft.integration = 'discarded';
+      draft.discardedAt = at;
+      delete draft.integrationPid;
+      delete draft.integrationAt;
+      return draft;
+    }).catch(() => store.read(job.id));
+  }
+
+  async function reconcileJob(r, store, job) {
+    let current = await store.reconcile(job);
+    if (isAbandonedReservation(current)) current = await recoverReservation(r, store, current);
+    return current;
+  }
+
   async function readJob(store, jobId) {
     if (!isJobId(jobId)) throw fail('unknown-job', `"${jobId}" is not a job id`);
-    return store.reconcile(store.read(jobId));
+    return reconcileJob(store.root, store, store.read(jobId));
   }
 
   async function listJobs(store) {
-    return Promise.all(store.list().map(job => store.reconcile(job)));
+    return Promise.all(store.list().map(job => reconcileJob(store.root, store, job)));
+  }
+
+  function sessionFor(r, sessionId) {
+    if (sessionId !== undefined && !isSessionId(sessionId)) throw fail('unknown-session', `"${sessionId}" is not a session id`);
+    const id = sessionId ?? currentSessionId;
+    return id ? createSessionStore(r).read(id) : null;
+  }
+
+  /** A session id the executor printed in a log, for a job whose record has none (a run from before 0.5). */
+  function sessionFromLogs(store, job) {
+    let adapter;
+    try {
+      adapter = adapterFor(job.executor);
+    } catch {
+      return undefined;
+    }
+    const p = store.paths(job.id);
+    const logs = [...turnsOf(job)].reverse().map(turn => p.turn(turn.n).executorLog).concat([p.executorLog]);
+    for (const log of logs) {
+      let text;
+      try {
+        text = fs.readFileSync(log, 'utf8');
+      } catch {
+        continue;
+      }
+      let found;
+      for (const line of text.split('\n')) {
+        const id = adapter.sessionFromLine(line);
+        if (id && SESSION_ID.test(id)) found = id;
+      }
+      if (found) return found;
+    }
+    return job.executorRun?.sessionId && SESSION_ID.test(job.executorRun.sessionId) ? job.executorRun.sessionId : undefined;
+  }
+
+  /** Asks a job's worker to stop its turn (the flag, plus SIGTERM where signals reach it). */
+  async function requestCancel(store, jobId) {
+    const flagged = await store.update(jobId, draft => {
+      draft.cancelRequested = true;
+    });
+    const pid = flagged.worker?.pid;
+    // On Windows a signal would end the worker at once, before it can stop
+    // its executor's tree and record the outcome: the flag alone is enough,
+    // since the worker reads it every second.
+    if (pid && isAlive(pid) && platform !== 'win32') {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // the heartbeat sees the flag
+      }
+    }
+    return flagged;
+  }
+
+  async function waitForEnd(store, jobId, ms, signal) {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const job = await readJob(store, jobId);
+      if (TERMINAL.has(job.status) || Date.now() >= deadline) return job;
+      await sleep(Math.min(POLL_MS, Math.max(0, deadline - Date.now())), signal);
+    }
+  }
+
+  /**
+   * Queues the next turn of a finished job and starts its worker. The state
+   * change is one update under the job's lock, so of two callers racing for
+   * the same job only one gets it; the other is told the job is busy.
+   */
+  async function queueTurn(r, store, jobId, entry, { endTakeover = false } = {}) {
+    const queuedAt = new Date().toISOString();
+    const queued = await store.update(jobId, draft => {
+      if (!TERMINAL.has(draft.status)) throw fail('job-busy', `Job ${jobId} is ${draft.status}: another turn got there first`);
+      const integration = draft.integration ?? 'none';
+      if (integration !== 'none') {
+        throw fail(RESERVATIONS.has(integration) ? 'job-busy' : 'already-integrated', `Job ${jobId} is ${integration}; it takes no more turns`);
+      }
+      draft.turns = turnsOf(draft).map(turn => ({ ...turn }));
+      const n = draft.turns.at(-1).n + 1;
+      draft.turns.push({ n, ...entry, status: 'queued', queuedAt });
+      draft.status = 'queued';
+      // A new turn starts clean: an old cancel must not stop it, an old error
+      // must not describe it, and its liveness is counted from now, not from
+      // the last turn's heartbeat and worker.
+      delete draft.cancelRequested;
+      delete draft.error;
+      delete draft.endedAt;
+      delete draft.startedAt;
+      draft.heartbeatAt = queuedAt;
+      draft.worker = {};
+      if (endTakeover) delete draft.takeover;
+      return draft;
+    });
+    const n = queued.turns.at(-1).n;
+    let pid;
+    try {
+      pid = startWorker(r, jobId, env, store.paths(jobId).workerLog);
+    } catch (err) {
+      await store.update(jobId, draft => {
+        draft.status = 'failed';
+        draft.endedAt = new Date().toISOString();
+        draft.error = { code: 'worker-start-failed', message: err.message };
+        Object.assign(draft.turns.at(-1), { status: 'failed', endedAt: draft.endedAt, error: 'worker-start-failed' });
+      });
+      throw fail('worker-start-failed', `Could not start the worker: ${err.message}`);
+    }
+    const job = await store.update(jobId, draft => {
+      draft.worker = { ...(draft.worker ?? {}), pid: draft.worker?.pid ?? pid };
+    });
+    return { job, turn: n };
   }
 
   /** Catalog entries for the agents named (default: all), fetching lists only when `fetch`. */
@@ -478,7 +766,7 @@ export function createRelay({
           light: `Simple, clearly specified work; 1-${settings.light.maxScopeEntries} scope paths and at least one check.`,
           review: 'Read-only investigation; any change is reported out of scope.',
         },
-        executors: describeExecutors(settings, env, defaults),
+        executors: describeExecutors(settings, env, defaults, { platform }),
       };
     },
 
@@ -496,7 +784,7 @@ export function createRelay({
           lastPlanner: last ? { planner: last.planner, confirmedAt: last.confirmedAt } : null,
         };
       }
-      if (env.AGENTHUB_RELAY_ROLE === 'executor') {
+      if (isExecutorCaller(env)) {
         throw fail('executor-role', 'An agenthub-relay executor may not start or confirm planner sessions.');
       }
       if (args.session !== undefined && !isSessionId(args.session)) throw fail('unknown-session', `"${args.session}" is not a session id`);
@@ -517,9 +805,7 @@ export function createRelay({
       const r = await root();
       const settings = config(r);
       const store = createStore(r);
-      if (args.session !== undefined && !isSessionId(args.session)) throw fail('unknown-session', `"${args.session}" is not a session id`);
-      const sessionId = args.session ?? currentSessionId;
-      const session = sessionId ? createSessionStore(r).read(sessionId) : null;
+      const session = sessionFor(r, args.session);
       const caller = plannerId();
       const { session: _session, ...request } = args;
       return store.withDispatchLock(async () => {
@@ -547,6 +833,7 @@ export function createRelay({
           const more = base.untrackedCount > base.untracked.length ? ', …' : '';
           warnings.push(`${base.untrackedCount} untracked file(s) are not in the job's baseline: ${base.untracked.join(', ')}${more}`);
         }
+        const createdAt = new Date().toISOString();
         try {
           store.create({
             id,
@@ -559,9 +846,15 @@ export function createRelay({
             },
             ...(session ? { session: session.id } : {}),
             base,
-            worktree: path.relative(r, dir),
+            worktree: relativePath(r, dir),
             branch,
             passEnv: settings.executors[plan.executor].passEnv,
+            createdAt,
+            turns: [{ n: 1, kind: 'dispatch', by: 'planner', status: 'queued', queuedAt: createdAt }],
+            // Claude Code takes the session id it is to use, so a takeover or
+            // a follow-up knows it before the first turn has ended.
+            native: plan.executor === 'claude' ? { sessionId: crypto.randomUUID() } : {},
+            baseWarnings: warnings,
             warnings,
           });
         } catch (err) {
@@ -576,12 +869,14 @@ export function createRelay({
             draft.status = 'failed';
             draft.endedAt = new Date().toISOString();
             draft.error = { code: 'worker-start-failed', message: err.message };
+            Object.assign(draft.turns.at(-1), { status: 'failed', endedAt: draft.endedAt, error: 'worker-start-failed' });
           });
           throw fail('worker-start-failed', `Could not start the worker: ${err.message}`);
         }
-        await store.update(id, draft => {
+        const job = await store.update(id, draft => {
           draft.worker = { ...(draft.worker ?? {}), pid: draft.worker?.pid ?? pid };
         });
+        const watching = watcher();
         return {
           jobId: id,
           title: plan.title,
@@ -594,12 +889,160 @@ export function createRelay({
           session: session?.id ?? null,
           scope: plan.scope,
           checks: plan.checks,
-          worktree: path.relative(r, dir),
+          worktree: relativePath(r, dir),
           branch,
           baseCommit: base.commit,
           baseIncludesUncommitted: base.includesUncommitted,
           warnings,
-          watcher: watcher(),
+          watcher: watching,
+          next: nextFor(job, { watcherActive: watching.active }),
+        };
+      });
+    },
+
+    async relay_send(args, { signal }) {
+      refuseExecutor('send to jobs');
+      if (typeof args.message !== 'string' || args.message.trim() === '') throw fail('invalid-request', 'message must be a non-empty string');
+      const r = await root();
+      const settings = config(r);
+      const store = createStore(r);
+      const session = sessionFor(r, args.session);
+      const caller = plannerId();
+      let job = await readJob(store, args.jobId);
+      if (LIVE.has(job.status)) {
+        if (args.interrupt !== true) {
+          throw fail('job-busy', `Job ${job.id} is still ${job.status}: wait for it, or pass interrupt: true to stop this turn and then send`, { status: job.status });
+        }
+        // Everything that would refuse the send is checked before anything is stopped.
+        planSend({ job: { ...job, status: 'completed' }, jobs: [], request: args, role: env.AGENTHUB_RELAY_ROLE, session, caller, config: settings });
+        await requestCancel(store, job.id);
+        job = await waitForEnd(store, job.id, STOP_WAIT_MS, signal);
+        if (!TERMINAL.has(job.status)) {
+          throw fail('interrupt-timeout', `Job ${job.id} did not stop within ${STOP_WAIT_MS / 1000} seconds; nothing was sent`);
+        }
+      }
+      if (!job.native?.sessionId) {
+        const found = sessionFromLogs(store, job);
+        if (found) {
+          job = await store.update(job.id, draft => {
+            draft.native = { ...(draft.native ?? {}), sessionId: found };
+          });
+        }
+      }
+      return store.withDispatchLock(async () => {
+        const jobs = await listJobs(store);
+        const current = jobs.find(entry => entry.id === job.id) ?? job;
+        if (!TERMINAL.has(current.status)) throw fail('job-busy', `Job ${current.id} is ${current.status}: another turn got there first`);
+        const plan = planSend({ job: current, jobs, request: args, role: env.AGENTHUB_RELAY_ROLE, session, caller, config: settings });
+        const queued = await queueTurn(r, store, current.id, {
+          kind: 'send',
+          by: 'planner',
+          message: plan.message,
+          ...(args.interrupt === true ? { interrupted: true } : {}),
+        }, { endTakeover: args.force === true });
+        const watching = watcher();
+        return {
+          jobId: current.id,
+          turn: queued.turn,
+          status: queued.job.status,
+          executor: current.executor,
+          sessionId: queued.job.native?.sessionId,
+          watcher: watching,
+          next: nextFor(queued.job, { watcherActive: watching.active }),
+        };
+      });
+    },
+
+    async relay_takeover(args, { signal }) {
+      refuseExecutor('take jobs over');
+      const r = await root();
+      const settings = config(r);
+      const store = createStore(r);
+      let job = await readJob(store, args.jobId);
+      const integration = job.integration ?? 'none';
+      if (integration !== 'none') {
+        throw fail(RESERVATIONS.has(integration) ? 'job-busy' : 'already-integrated', `Job ${job.id} is ${integration}; there is nothing to take over`);
+      }
+      const sessionId = job.native?.sessionId ?? sessionFromLogs(store, job);
+      if (!sessionId) {
+        throw fail('resume-unsupported', `Job ${job.id} has no ${job.executor} session to take over: the executor reported none${LIVE.has(job.status) ? ' yet' : ''}.`, { executor: job.executor });
+      }
+      if (!SESSION_ID.test(sessionId)) throw fail('invalid-session', `The session id "${sessionId}" of job ${job.id} is not one the relay passes on`);
+      let stopped = false;
+      if (LIVE.has(job.status)) {
+        if (args.stop !== true) {
+          throw fail('job-running', `Job ${job.id} is still ${job.status} headless. Pass stop: true to stop this turn first; its session and worktree stay.`, { status: job.status });
+        }
+        await requestCancel(store, job.id);
+        job = await waitForEnd(store, job.id, STOP_WAIT_MS, signal);
+        if (!TERMINAL.has(job.status)) throw fail('stop-timeout', `Job ${job.id} did not stop within ${STOP_WAIT_MS / 1000} seconds`);
+        stopped = true;
+      }
+      const command = executorCommand(job.executor, settings, { env, platform });
+      const ways = adapterFor(job.executor).takeover({ command, sessionId });
+      const cwd = path.join(r, job.worktree);
+      const taken = await store.update(job.id, draft => {
+        if ((draft.integration ?? 'none') !== 'none') throw fail('already-integrated', `Job ${draft.id} is ${draft.integration}`);
+        if (!TERMINAL.has(draft.status)) throw fail('job-busy', `Job ${draft.id} is ${draft.status}`);
+        draft.takeover = { at: new Date().toISOString(), sessionId, ...(stopped ? { stopped: true } : {}) };
+        draft.native = { ...(draft.native ?? {}), sessionId };
+      });
+      const describe = way => way && {
+        label: way.label,
+        ...(way.url ? { url: way.url } : { command: displayCommand(way.argv, platform) }),
+        ...(way.verified === false ? { verified: false } : {}),
+        ...(way.note ? { note: way.note } : {}),
+      };
+      let opened;
+      if (args.open === true) {
+        opened = ways.app
+          ? await open(ways.app.url ? { url: ways.app.url } : { argv: ways.app.argv, cwd }, { env, platform })
+          : { ok: false, error: `${job.executor} has no desktop app to open; run the terminal command in the worktree.` };
+      }
+      return {
+        jobId: job.id,
+        executor: job.executor,
+        sessionId,
+        cwd,
+        stopped,
+        ...(ways.app ? { app: describe(ways.app) } : {}),
+        terminal: { ...describe(ways.terminal), cwd },
+        ...(ways.note ? { note: ways.note } : {}),
+        ...(job.write ? {} : { warning: 'This is a read-only review: the session you open is not held to that rule, and any change made there is reported out of scope and cannot be applied.' }),
+        ...(opened ? { opened } : {}),
+        instruction: 'Close the interactive session before handing the job back with relay_collect. While the job is taken over the relay sends it nothing.',
+        next: nextFor(taken),
+      };
+    },
+
+    async relay_collect(args) {
+      refuseExecutor('collect jobs');
+      const r = await root();
+      const store = createStore(r);
+      const job = await readJob(store, args.jobId);
+      if (LIVE.has(job.status)) throw fail('job-running', `Job ${job.id} is still ${job.status}`);
+      return store.withDispatchLock(async () => {
+        const jobs = await listJobs(store);
+        const current = jobs.find(entry => entry.id === job.id) ?? job;
+        const integration = current.integration ?? 'none';
+        if (integration !== 'none') {
+          throw fail(RESERVATIONS.has(integration) ? 'job-busy' : 'already-integrated', `Job ${current.id} is ${integration}`);
+        }
+        if (current.write && !holdsScope(current)) {
+          const conflict = scopeConflict(current, jobs);
+          if (conflict) {
+            throw fail('scope-conflict', `Job ${current.id} gave up its scope when it ended ${current.status}, and "${conflict.left}" now overlaps "${conflict.right}" claimed by job ${conflict.job.id}`, { job: conflict.job.id });
+          }
+        }
+        const queued = await queueTurn(r, store, current.id, { kind: 'collect', by: current.takeover ? 'user' : 'planner' });
+        const watching = watcher();
+        return {
+          jobId: current.id,
+          turn: queued.turn,
+          status: queued.job.status,
+          note: 'The checks run and the changes are collected in the background; wait for the job, then read its result.',
+          watcher: watching,
+          next: nextFor(queued.job, { watcherActive: watching.active }),
         };
       });
     },
@@ -608,11 +1051,22 @@ export function createRelay({
       if (args.watch === true) watcherSeenAt = Date.now();
       const r = await root();
       const store = createStore(r);
-      if (args.jobId !== undefined) return { job: summarize(await readJob(store, args.jobId)), watcher: watcher() };
+      if (args.jobId !== undefined) {
+        const job = await readJob(store, args.jobId);
+        const watching = watcher();
+        return { job: summarize(job), watcher: watching, next: nextFor(job, { watcherActive: watching.active }) };
+      }
       const jobs = (await listJobs(store)).filter(job => args.all === true || job.integration !== 'discarded');
+      const listed = jobs.map(summarize);
+      const totals = {};
+      for (const job of listed) {
+        for (const [key, value] of Object.entries(job.usage ?? {})) totals[key] = (totals[key] ?? 0) + value;
+      }
+      if (totals.costUsd !== undefined) totals.costUsd = Math.round(totals.costUsd * 1e6) / 1e6;
       return {
-        jobs: jobs.map(summarize),
+        jobs: listed,
         running: jobs.filter(job => !TERMINAL.has(job.status)).length,
+        ...(Object.keys(totals).length ? { usage: totals } : {}),
         watcher: watcher(),
       };
     },
@@ -646,13 +1100,17 @@ export function createRelay({
       const r = await root();
       const store = createStore(r);
       let job = await readJob(store, args.jobId);
-      if (TERMINAL.has(job.status) && !job.resultFetchedAt) {
+      const n = turnNumber(job);
+      if (TERMINAL.has(job.status) && !(job.resultFetchedTurn >= n)) {
         job = await store.update(job.id, draft => {
           draft.resultFetchedAt = new Date().toISOString();
+          draft.resultFetchedTurn = n;
         });
       }
       const p = store.paths(job.id);
-      const rel = file => path.relative(r, file);
+      const turnPaths = p.turn(n);
+      const perTurn = fs.existsSync(turnPaths.dir);
+      const rel = file => relativePath(r, file);
       const checkLogs = job.checkResults?.filter(check => check.log).map(check => rel(check.log)) ?? [];
       return {
         ...summarize(job),
@@ -668,7 +1126,30 @@ export function createRelay({
         warnings: job.warnings ?? [],
         executorRun: job.executorRun,
         error: job.error,
-        logs: { executor: rel(p.executorLog), worker: rel(p.workerLog), final: rel(p.final), patch: rel(p.patch), checks: checkLogs },
+        ...(job.native?.sessionId ? { native: { sessionId: job.native.sessionId } } : {}),
+        ...(job.takeover ? { takeover: job.takeover } : {}),
+        turns: turnsOf(job).map(turn => ({
+          n: turn.n,
+          kind: turn.kind,
+          by: turn.by,
+          status: turn.status,
+          ...(turn.verification ? { verification: turn.verification } : {}),
+          ...(turn.message ? { message: clipText(turn.message, MAX_LISTED_MESSAGE_CHARS) } : {}),
+          ...(turn.startedAt ? { startedAt: turn.startedAt } : {}),
+          ...(turn.endedAt ? { endedAt: turn.endedAt } : {}),
+          ...(turn.summary ? { summary: turn.summary } : {}),
+          ...(turn.usage ? { usage: turn.usage } : {}),
+          ...(turn.error ? { error: turn.error } : {}),
+        })),
+        logs: {
+          executor: rel(perTurn ? turnPaths.executorLog : p.executorLog),
+          worker: rel(p.workerLog),
+          final: rel(p.final),
+          patch: rel(p.patch),
+          checks: checkLogs,
+          ...(perTurn ? { turn: rel(turnPaths.dir) } : {}),
+        },
+        next: nextFor(job),
       };
     },
 
@@ -676,23 +1157,48 @@ export function createRelay({
       const r = await root();
       const store = createStore(r);
       const job = await readJob(store, args.jobId);
-      if (!TERMINAL.has(job.status)) throw fail('job-running', `Job ${job.id} is still ${job.status}`);
-      if (job.integration !== 'none') throw fail('already-integrated', `Job ${job.id} was already ${job.integration}`);
-      if (!job.write) throw fail('read-only-job', `Job ${job.id} is a read-only review; discard it instead`);
-      if (job.status !== 'completed' && args.force !== true) {
-        throw fail('job-not-completed', `Job ${job.id} ended ${job.status}; pass force: true to apply it anyway`);
+      // Every check and the reservation are one update under the job's lock;
+      // the git work runs outside it, so a slow apply cannot outlive the lock.
+      const reserved = await store.update(job.id, draft => {
+        if (!TERMINAL.has(draft.status)) throw fail('job-running', `Job ${draft.id} is still ${draft.status}`);
+        const integration = draft.integration ?? 'none';
+        if (RESERVATIONS.has(integration)) throw fail('job-busy', `Job ${draft.id} is ${integration}`);
+        if (integration !== 'none') throw fail('already-integrated', `Job ${draft.id} was already ${integration}`);
+        if (!draft.write) throw fail('read-only-job', `Job ${draft.id} is a read-only review; discard it instead`);
+        if (draft.takeover) {
+          throw fail('taken-over', `Job ${draft.id} is taken over: its patch predates what was done there. Hand it back with relay_collect first.`);
+        }
+        if (draft.status !== 'completed' && args.force !== true) {
+          throw fail('job-not-completed', `Job ${draft.id} ended ${draft.status}; pass force: true to apply it anyway`);
+        }
+        if ((draft.outOfScope ?? []).length > 0 && args.allowOutOfScope !== true) {
+          throw fail('out-of-scope', `Job ${draft.id} changed files outside its scope: ${draft.outOfScope.join(', ')}; pass allowOutOfScope: true to apply them`, {
+            outOfScope: draft.outOfScope,
+          });
+        }
+        draft.integration = 'applying';
+        draft.integrationPid = process.pid;
+        draft.integrationAt = new Date().toISOString();
+      });
+      try {
+        // The main tree changes under the repository's dispatch lock, so no
+        // dispatch snapshots a half-applied tree.
+        await store.withDispatchLock(() => applyPatch(r, store.paths(job.id).patch));
+      } catch (err) {
+        await store.update(job.id, draft => {
+          draft.integration = 'none';
+          delete draft.integrationPid;
+          delete draft.integrationAt;
+        }).catch(() => {});
+        throw err;
       }
-      if ((job.outOfScope ?? []).length > 0 && args.allowOutOfScope !== true) {
-        throw fail('out-of-scope', `Job ${job.id} changed files outside its scope: ${job.outOfScope.join(', ')}; pass allowOutOfScope: true to apply them`, {
-          outOfScope: job.outOfScope,
-        });
-      }
-      await applyPatch(r, store.paths(job.id).patch);
       // The patch is in the working tree now: record that before cleanup,
       // so a failed cleanup cannot make the job look unapplied.
       await store.update(job.id, draft => {
         draft.integration = 'applied';
         draft.appliedAt = new Date().toISOString();
+        delete draft.integrationPid;
+        delete draft.integrationAt;
       });
       let worktreeRemoved = true;
       try {
@@ -703,7 +1209,7 @@ export function createRelay({
       return {
         jobId: job.id,
         applied: true,
-        files: job.changedFiles ?? [],
+        files: reserved.changedFiles ?? [],
         worktreeRemoved,
         note: 'The changes are in your working tree, unstaged. Review and commit them.',
       };
@@ -713,12 +1219,33 @@ export function createRelay({
       const r = await root();
       const store = createStore(r);
       const job = await readJob(store, args.jobId);
-      if (!TERMINAL.has(job.status)) throw fail('job-running', `Job ${job.id} is still ${job.status}; cancel it first`);
-      if (job.integration !== 'none') throw fail('already-integrated', `Job ${job.id} was already ${job.integration}`);
-      await removeWorktree(r, job.id);
+      await store.update(job.id, draft => {
+        if (!TERMINAL.has(draft.status)) throw fail('job-running', `Job ${draft.id} is still ${draft.status}; cancel it first`);
+        const integration = draft.integration ?? 'none';
+        if (RESERVATIONS.has(integration)) throw fail('job-busy', `Job ${draft.id} is ${integration}`);
+        if (integration !== 'none') throw fail('already-integrated', `Job ${draft.id} was already ${integration}`);
+        if (draft.takeover && args.force !== true) {
+          throw fail('taken-over', `Job ${draft.id} is taken over and someone may still be working in its worktree; pass force: true to discard it anyway`);
+        }
+        draft.integration = 'discarding';
+        draft.integrationPid = process.pid;
+        draft.integrationAt = new Date().toISOString();
+      });
+      try {
+        await removeWorktree(r, job.id);
+      } catch (err) {
+        await store.update(job.id, draft => {
+          draft.integration = 'none';
+          delete draft.integrationPid;
+          delete draft.integrationAt;
+        }).catch(() => {});
+        throw err;
+      }
       await store.update(job.id, draft => {
         draft.integration = 'discarded';
         draft.discardedAt = new Date().toISOString();
+        delete draft.integrationPid;
+        delete draft.integrationAt;
       });
       return { jobId: job.id, discarded: true };
     },
@@ -730,25 +1257,15 @@ export function createRelay({
       if (TERMINAL.has(job.status)) throw fail('job-finished', `Job ${job.id} already ended ${job.status}`);
       // The worker ends the job itself: on SIGTERM, at startup or at its next
       // heartbeat. A job whose worker is gone is reconciled to cancelled.
-      const flagged = await store.update(job.id, draft => {
-        draft.cancelRequested = true;
-      });
+      const flagged = await requestCancel(store, job.id);
       const pid = flagged.worker?.pid;
-      // On Windows a signal would end the worker at once, before it can stop
-      // its executor's tree and record the outcome: the flag alone is enough,
-      // since the worker reads it every second.
       if (pid && isAlive(pid) && platform === 'win32') {
         return { jobId: job.id, cancelling: true, note: 'The worker sees the request within a second, stops the executor and ends the job cancelled.' };
       }
       if (pid && isAlive(pid)) {
-        try {
-          process.kill(pid, 'SIGTERM');
-        } catch {
-          // the heartbeat sees the flag
-        }
         return { jobId: job.id, cancelling: true, note: 'The worker is stopping the executor; the job ends cancelled.' };
       }
-      const ended = await store.reconcile(store.read(job.id));
+      const ended = await readJob(store, job.id);
       return { jobId: job.id, cancelling: !TERMINAL.has(ended.status), status: ended.status };
     },
   };

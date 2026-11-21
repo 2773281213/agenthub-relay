@@ -19,6 +19,11 @@ These rules apply to every agent working in this repository, whichever agent is 
 - Pass secrets only by environment variable name; never write API keys or environment values into job records, logs, events or test fixtures.
 - Dispatch only inside a planner session the user confirmed: refuse a dispatch without a confirmed session unless `sessions.required` is false, and refuse a caller identified as another agent than the session's planner.
 - Read other agents' own settings files (Codex `config.toml`, Claude Code `settings.json`, DeepSeek Harness `settings.yaml`) only to report their models; never write them.
+- Continue a job only in the executor's own native session and in the job's own worktree; a job whose executor reported no session fails closed (`resume-unsupported`), and a follow-up is refused once the job is applied or discarded.
+- Send nothing to a taken-over job until it is collected or the planner forces it; a taken-over job keeps its scope, apply refuses it, and discard needs force.
+- Change a job's status, integration or turn only in one store update that checks the current state first; never hold a lock while waiting for a turn to stop, and never run git on the main tree while another process may snapshot it (apply holds the dispatch lock for `git apply`).
+- Find an executor outside PATH only for its built-in command name; never replace a command the user configured.
+- Start every child process with `windowsHide` on Windows: a worker has no console, and a child that gets a console of its own can be killed with it.
 
 ## Verification rules
 

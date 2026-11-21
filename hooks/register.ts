@@ -31,6 +31,14 @@ export type RelayJob = {
   integration?: string
   verification?: string
   resultFetched?: boolean
+  /** The job's latest turn (relay_send and relay_collect add turns); 1 when absent. */
+  turn?: number
+  takenOver?: boolean
+}
+
+/** One turn of one job: a follow-up turn wakes the session again. */
+export function turnKey(job: RelayJob): string {
+  return `${job.id}#${job.turn ?? 1}`
 }
 
 export type Decision =
@@ -94,7 +102,7 @@ const INITIAL: RelayKeepAlive = {
 }
 
 // Change the tag when the fields change: an older stored value is then read as INITIAL.
-const keepAlive = atom({ plugin: 'agenthub-relay', key: 'keepAlive' } as const, INITIAL, { shape: 'keep-alive-1' })
+const keepAlive = atom({ plugin: 'agenthub-relay', key: 'keepAlive' } as const, INITIAL, { shape: 'keep-alive-2' })
 
 function bounded(value: unknown, fallback: number, min: number, max: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback
@@ -110,15 +118,16 @@ function unique(list: readonly string[]): string[] {
   return [...new Set(list)].slice(-KEEP)
 }
 
-function wakeText(jobs: RelayJob[]): string {
+export function wakeText(jobs: RelayJob[]): string {
   const lines = jobs.map(job => {
     const checks = job.verification ? `, checks ${job.verification}` : ''
-    return `- ${job.id} (${job.executor ?? '?'}, ${job.tier ?? '?'}) ended ${job.status}${checks}: ${job.title ?? ''}`
+    const turn = (job.turn ?? 1) > 1 ? ` (turn ${job.turn})` : ''
+    return `- ${job.id} (${job.executor ?? '?'}, ${job.tier ?? '?'}) ended ${job.status}${checks}${turn}: ${job.title ?? ''}`
   })
   return [
-    `agenthub-relay: ${jobs.length === 1 ? 'a job you dispatched has' : `${jobs.length} jobs you dispatched have`} ended.`,
+    `[agenthub-relay] ${jobs.length === 1 ? 'A job you dispatched has' : `${jobs.length} jobs you dispatched have`} ended. Read each job's result, then continue your task:`,
     ...lines,
-    'Read each with relay_result, then relay_apply or relay_discard.',
+    'Read each with relay_result. Then relay_apply it, relay_send its session what to change, or relay_discard it.',
   ].join('\n')
 }
 
@@ -191,10 +200,12 @@ async function forkNow($: EngineInterface, rt: Runtime, at: number): Promise<voi
 
 function showStatus($: EngineInterface, rt: Runtime, state: RelayKeepAlive, now: number): void {
   const running = rt.lastJobs.filter(job => LIVE.has(job.status)).length
-  const waiting = rt.lastJobs.filter(job => TERMINAL.has(job.status) && job.integration === 'none' && !job.resultFetched).length
+  const waiting = rt.lastJobs.filter(job => TERMINAL.has(job.status) && job.integration === 'none' && !job.resultFetched && !job.takenOver).length
+  const taken = rt.lastJobs.filter(job => job.takenOver && job.integration === 'none').length
   const parts: string[] = []
   if (running > 0) parts.push(`${running} running`)
   if (waiting > 0) parts.push(`${waiting} to review`)
+  if (taken > 0) parts.push(`${taken} taken over`)
   if (running > 0 && rt.enabled) {
     if (state.paused !== null) parts.push('keep-alive paused')
     else if (state.lastForkAt !== null) parts.push(`cache refreshed ${ago(now, state.lastForkAt)}`)
@@ -211,20 +222,21 @@ async function tick($: EngineInterface, rt: Runtime): Promise<void> {
     let state = await read($, keepAlive)
     if (jobs !== undefined) {
       rt.lastJobs = jobs
-      const live = jobs.filter(job => LIVE.has(job.status)).map(job => job.id)
+      const live = jobs.filter(job => LIVE.has(job.status)).map(turnKey)
       const ended = jobs.filter(
         job =>
           TERMINAL.has(job.status) &&
-          state.watched.includes(job.id) &&
-          !state.notified.includes(job.id) &&
+          state.watched.includes(turnKey(job)) &&
+          !state.notified.includes(turnKey(job)) &&
           job.integration === 'none' &&
+          job.takenOver !== true &&
           job.resultFetched !== true,
       )
       if (live.some(id => !state.watched.includes(id))) {
         state = await update($, keepAlive, s => ({ ...s, watched: unique([...s.watched, ...live]) }))
       }
       if (ended.length > 0 && rt.wakeOnFinish && !rt.busy) {
-        state = await update($, keepAlive, s => ({ ...s, notified: unique([...s.notified, ...ended.map(job => job.id)]) }))
+        state = await update($, keepAlive, s => ({ ...s, notified: unique([...s.notified, ...ended.map(turnKey)]) }))
         await $.prompt.submit({ text: wakeText(ended) })
       }
     }

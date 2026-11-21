@@ -11,10 +11,22 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 export const CLI = path.join(ROOT, 'src', 'cli.mjs');
 export const FAKE_AGENT = path.join(ROOT, 'test', 'fixtures', 'fake-agent.mjs');
 
+// Tests see none of this machine's own relay settings or installed agents:
+// the user configuration file is one that does not exist, and executors are
+// looked for on PATH only. Child processes (workers, the CLI) inherit both.
+// Tests about either set their own values.
+process.env.AGENTHUB_RELAY_USER_CONFIG ??= path.join(os.tmpdir(), `agenthub-test-no-user-config-${process.pid}.json`);
+process.env.AGENTHUB_RELAY_DISCOVERY ??= 'off';
+
+/** Removes a test folder; Windows may hold files of a process that just ended for a moment. */
+export function removeDir(dir) {
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+}
+
 /** A fresh temporary directory, removed by the returned cleanup. */
 export function tempDir(prefix = 'agenthub-test-') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  return { dir: fs.realpathSync(dir), cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+  return { dir: fs.realpathSync(dir), cleanup: () => removeDir(dir) };
 }
 
 export function git(cwd, ...args) {
@@ -33,6 +45,10 @@ export function makeRepo(files = { 'README.md': '# demo\n', 'src/app.txt': 'app\
   git(dir, 'config', 'user.email', 'test@example.invalid');
   git(dir, 'config', 'user.name', 'agenthub test');
   git(dir, 'config', 'commit.gpgsign', 'false');
+  // A global core.autocrlf=true (common on Windows) would turn the files a
+  // test reads back into CRLF; tests compare exact bytes.
+  git(dir, 'config', 'core.autocrlf', 'false');
+  git(dir, 'config', 'core.safecrlf', 'false');
   for (const [name, content] of Object.entries(files)) {
     const file = path.join(dir, name);
     fs.mkdirSync(path.dirname(file), { recursive: true });

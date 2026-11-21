@@ -19,7 +19,7 @@ export type RelayKeepAlive = {
   lastDecision: string | null
   /** Compactions of the main conversation this session saw. */
   compactions: RelayCompaction[]
-  /** Jobs seen running while this session watched. */
+  /** Job turns (`<job id>#<turn>`) seen running while this session watched. */
   watched: string[]
   /** Watched jobs whose end already woke the session. */
   notified: string[]

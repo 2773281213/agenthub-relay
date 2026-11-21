@@ -64,14 +64,81 @@ export function outOfScope(files, scope) {
   return files.filter(file => !scope.some(entry => covers(entry, file)));
 }
 
+/** Integration values in the middle of an apply or a discard. */
+const RESERVED_INTEGRATIONS = new Set(['applying', 'discarding']);
+
 /**
- * Whether a job still claims its scope: its worker is live, or it completed
- * and its patch has been neither applied nor discarded.
+ * Whether a job still claims its scope: its worker is live; it completed and
+ * its patch has been neither applied nor discarded; a person took it over and
+ * has not handed it back; or an apply or discard is working on it right now.
  */
 export function holdsScope(job) {
   if (!job.write) return false;
   if (LIVE.has(job.status)) return true;
-  return job.status === 'completed' && (job.integration ?? 'none') === 'none';
+  const integration = job.integration ?? 'none';
+  if (RESERVED_INTEGRATIONS.has(integration)) return true;
+  if (integration !== 'none') return false;
+  return job.status === 'completed' || Boolean(job.takeover);
+}
+
+/** Whether the caller runs as an agenthub-relay executor, which may not plan. */
+export function isExecutorCaller(env = {}) {
+  return env.AGENTHUB_RELAY_ROLE === 'executor';
+}
+
+/** The first other job whose claimed scope overlaps `job`'s, with the overlapping entries. */
+export function scopeConflict(job, jobs) {
+  for (const other of jobs) {
+    if (other.id === job.id || !holdsScope(other)) continue;
+    const overlap = scopesOverlap(job.scope ?? ['.'], other.scope ?? ['.']);
+    if (overlap) return { job: other, ...overlap };
+  }
+  return null;
+}
+
+/**
+ * Whether a follow-up turn may go to a finished job (relay_send), and the
+ * message it carries. The caller has already stopped a running turn; what is
+ * checked here is the planner session, the job's integration and takeover,
+ * that the executor left a session to continue, and that a job which had let
+ * go of its scope (failed or cancelled) can claim it again.
+ */
+export function planSend({ job, jobs = [], request, role, session, caller, config }) {
+  if (role === 'executor') {
+    throw new PolicyError('executor-role', 'This process runs as an agenthub-relay executor; executors may not send to jobs.');
+  }
+  if (session !== undefined) checkSession({ session, caller, required: config?.sessions?.required ?? true });
+  if (request === null || typeof request !== 'object') throw new PolicyError('invalid-request', 'The send request must be an object');
+  const message = cleanText(request.message, 'message', MAX_TASK_CHARS, { required: true });
+  const integration = job.integration ?? 'none';
+  if (integration !== 'none') {
+    throw new PolicyError(RESERVED_INTEGRATIONS.has(integration) ? 'job-busy' : 'already-integrated', `Job ${job.id} is ${integration}; it takes no more turns`);
+  }
+  if (job.takeover && request.force !== true) {
+    throw new PolicyError(
+      'taken-over',
+      `Job ${job.id} was taken over on ${job.takeover.at}. Hand it back with relay_collect once the interactive session is closed, or pass force: true to send anyway.`,
+      { job: job.id },
+    );
+  }
+  if (!job.native?.sessionId) {
+    throw new PolicyError(
+      'resume-unsupported',
+      `Job ${job.id} has no ${job.executor} session to continue (the executor reported none). Dispatch a new job instead.`,
+      { job: job.id, executor: job.executor },
+    );
+  }
+  if (job.write && !holdsScope(job)) {
+    const conflict = scopeConflict(job, jobs);
+    if (conflict) {
+      throw new PolicyError(
+        'scope-conflict',
+        `Job ${job.id} gave up its scope when it ended ${job.status}, and "${conflict.left}" now overlaps "${conflict.right}" claimed by job ${conflict.job.id}`,
+        { job: conflict.job.id },
+      );
+    }
+  }
+  return { message };
 }
 
 function cleanText(value, field, max, { required = false } = {}) {
@@ -251,11 +318,12 @@ export function planDispatch({ request, config, jobs = [], role, session, caller
       if (!holdsScope(job)) continue;
       const overlap = scopesOverlap(effectiveScope, job.scope ?? ['.']);
       if (overlap) {
+        const why = job.takeover ? ', taken over and not handed back'
+          : job.status === 'completed' ? ', not yet applied or discarded'
+          : '';
         throw new PolicyError(
           'scope-conflict',
-          `Scope "${overlap.left}" overlaps "${overlap.right}" claimed by job ${job.id} (${job.status}${
-            job.status === 'completed' ? ', not yet applied or discarded' : ''
-          })`,
+          `Scope "${overlap.left}" overlaps "${overlap.right}" claimed by job ${job.id} (${job.status}${why})`,
           { job: job.id },
         );
       }

@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { MODEL_NAME, RESERVED, userConfigPath } from './config.mjs';
+import { executorCommand } from './discovery.mjs';
 import { childSpawnOptions, envValue, killTree, resolveCommand } from './platform.mjs';
 import { writeJsonAtomic } from './store.mjs';
 import { parseYaml } from './yaml-lite.mjs';
@@ -500,7 +501,7 @@ export async function catalogFor(agent, {
   }
   if (agent === 'agy') {
     try {
-      const models = await listAgyModels({ command: config?.executors?.agy?.command ?? 'agy', env, platform });
+      const models = await listAgyModels({ command: executorCommand('agy', config, { env, platform }), env, platform });
       const entry = { source: 'agy models', models, fetchedAt: new Date(now).toISOString() };
       writeCache(cacheFile, key, entry);
       return { ...base, ...entry };
@@ -509,7 +510,7 @@ export async function catalogFor(agent, {
     }
   }
   try {
-    const models = await listCodexModels({ command: config?.executors?.codex?.command ?? 'codex', env, platform, clientVersion });
+    const models = await listCodexModels({ command: executorCommand('codex', config, { env, platform }), env, platform, clientVersion });
     const entry = { source: 'codex app-server', models, fetchedAt: new Date(now).toISOString() };
     writeCache(cacheFile, key, entry);
     return { ...base, ...entry };

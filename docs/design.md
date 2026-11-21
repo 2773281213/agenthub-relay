@@ -149,6 +149,19 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 4. **YAML 子集**（`src/yaml-lite.mjs`）：只读块映射、序列、标量和注释，其他写法带行号报错，不猜。
 5. **不写别家的配置**：AGENTS.md 新增规则，relay 只读 codex、claude、dsh 的配置文件。规划者自己的模型由宿主决定。
 
+## 16. v0.5：任务是一段对话（借鉴 codex-host）
+
+起因是借鉴 [codex-host](https://github.com/BytePioneer-AI/codex-host) 的委派与接管：子任务是目标 agent 的原生会话，可以追加指令、由人在它自己的应用里接手。此前中继的任务是一次性的，追加修改只能重派、上下文全丢，被中断的任务要手工导出补丁再续做。
+
+1. **轮次**（`src/store.mjs`）：派发是第 1 轮，每次 `relay_send`（续接）或 `relay_collect`（交还）加一轮。`turns[]` 记录每一轮，顶层字段描述最近一轮。终态任务只在 `integration` 为 `none` 时经 `queued` 进入下一轮；collect 轮跳过执行者，从 `queued` 直接进 `verifying`。每一轮的日志、总结、检查日志在 `turns/<n>/`；补丁始终相对最初的基线。
+2. **续接**（`src/executors.mjs` 的 `resume`）：codex `exec resume <thread> -`（resume 没有 `--sandbox`，改用 `-c sandbox_mode=…`），claude 派发时用 `--session-id` 预先指定、之后 `-p --resume`，dsh `--profile headless --json -` 读 `session` 与 `final` 事件、续接用 `--session-id`（按 `--help` 探测，缓存键为路径加修改时间），agy `--conversation`。会话 id 在执行者打印的当下就写进 `job.native`，worker 丢失后仍可续做。
+3. **重新排队**（`queueTurn`）：在任务锁里一次完成状态检查与切换，并清掉取消标记、错误、结束时间，刷新心跳，避免新一轮被旧的取消或旧心跳误判。`--interrupt` 在锁外设取消标记、等最多 30 秒；重开已放弃范围的 failed/cancelled 任务要在派发锁里重新核对范围。
+4. **接管与交还**：`relay_takeover` 给出各执行者的打开方式（Claude 桌面应用、`codex://threads/<id>`、终端命令），运行中的任务要 `stop`；`open` 不经 shell 启动（Windows 用 rundll32），并去掉 `CLAUDECODE`、`CLAUDE_CODE_*` 等规划者会话变量。接管期间任务继续占着范围，send、apply 拒绝，discard 要 force。`relay_collect` 在后台跑检查、用临时索引收集补丁（不动 worktree 自己的暂存区），worktree 分支偏离时报 `branch-diverged`。
+5. **apply/discard 占位**：先在任务锁里检查并标成 `applying`/`discarding`，锁外做 git，再记为 `applied`/`discarded` 或退回 `none`；`git apply` 持派发锁，避免并发派发把半成品当基线。占位进程挂掉（pid 不在或超过 10 分钟）时，`apply -R --check` 能通过就记为 applied，否则退回 none。
+6. **执行者发现**（`src/discovery.mjs`）：内置命令名不在 PATH 时，到常见安装位置找（Codex Desktop 的 AppX 包、`%LOCALAPPDATA%\OpenAI\Codex\bin`、agy、dsh、claude 的用户目录），配置过的命令不替换。
+7. **其他**：结果带 `next` 提示；`result --format text`；用量按适配器归一化后按轮累加；`install-skills` 按文件清单与历次发布的摘要更新本机副本；mod 按"任务 + 轮次"唤醒、不唤醒被接管的任务。
+8. **Windows 收尾时的 `git-failed`**：worker 以 detached 启动、没有控制台，它启动的 git 若不隐藏窗口会各自新开控制台，控制台被关时 git 以 0xC000013A（STATUS_CONTROL_C_EXIT）退出。实测不隐藏时约 1/80 失败，隐藏后 0/160。现在 git 一律 `windowsHide`，此类退出码在收集时重试。
+
 ## 来源
 
 - [linux.do 话题 3028918](https://linux.do/t/topic/3028918)

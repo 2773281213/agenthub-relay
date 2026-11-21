@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 
+import { copyTree } from '../src/install.mjs';
 import { parseYaml } from '../src/yaml-lite.mjs';
 import { fakeTask, makeRepo, ROOT, useFakeExecutors } from './helpers.mjs';
 
@@ -30,7 +31,9 @@ test('a copied skill directory runs the relay on its own', () => {
   try {
     useFakeExecutors(dir);
     // What `npx skills add` or a manual copy does: only the skill folder.
-    fs.cpSync(path.join(SKILLS, 'agenthub-relay'), path.join(installed, 'agenthub-relay'), { recursive: true });
+    // Copied without fs.cpSync, which has aborted Node on Windows for a
+    // source path with non-ASCII characters (this repository's own, say).
+    copyTree(path.join(SKILLS, 'agenthub-relay'), path.join(installed, 'agenthub-relay'));
     const script = path.join(installed, 'agenthub-relay', 'scripts', 'cli.mjs');
     const env = { ...process.env, AGENTHUB_RELAY_ROOT: dir, AGENTHUB_RELAY_USER_CONFIG: path.join(installed, 'user.json') };
     delete env.AGENTHUB_RELAY_ROLE;
@@ -52,8 +55,13 @@ test('a copied skill directory runs the relay on its own', () => {
   }
 });
 
+/** A SKILL.md as LF text: a Windows checkout may have it with CRLF. */
+function readSkill(file) {
+  return fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+}
+
 function frontmatter(file) {
-  const text = fs.readFileSync(file, 'utf8');
+  const text = readSkill(file);
   const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
   assert.ok(match, `${file} starts with frontmatter`);
   return { fields: Object.fromEntries(match[1].split('\n').map(line => [line.slice(0, line.indexOf(':')), line.slice(line.indexOf(':') + 1).trim()])), body: text.slice(match[0].length) };
@@ -69,7 +77,7 @@ test('each skill is named after its folder; the thin entries are explicit-only a
     if (name === 'agenthub-relay') {
       assert.equal(fields['disable-model-invocation'], undefined, 'the main skill may be chosen by the model');
       // Claude Code appends when_to_use to the description and cuts the pair at 1,536 characters.
-      const parsed = parseYaml(/^---\n([\s\S]*?)\n---\n/.exec(fs.readFileSync(path.join(SKILLS, name, 'SKILL.md'), 'utf8'))[1]);
+      const parsed = parseYaml(/^---\n([\s\S]*?)\n---\n/.exec(readSkill(path.join(SKILLS, name, 'SKILL.md')))[1]);
       assert.equal(typeof parsed.when_to_use, 'string', 'when_to_use is one plain string');
       assert.ok(parsed.description.length + parsed.when_to_use.length <= 1536, 'description and when_to_use fit the listing');
       assert.match(parsed.when_to_use, /交给 codex 做/, 'Chinese requests trigger it too');

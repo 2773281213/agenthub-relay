@@ -191,13 +191,14 @@ test('the executor prompt states scope, checks and the rules for each tier', () 
 });
 
 test('availability is looked up on PATH; reserved executors are listed with their reason', () => {
+  const windows = process.platform === 'win32';
   const nodeDir = path.dirname(process.execPath);
-  assert.equal(findOnPath('node', nodeDir), path.join(nodeDir, 'node'));
+  assert.equal(findOnPath('node', nodeDir).toLowerCase(), path.join(nodeDir, windows ? 'node.exe' : 'node').toLowerCase());
   assert.equal(findOnPath(process.execPath, ''), process.execPath);
   assert.equal(findOnPath('definitely-not-a-command-xyz', process.env.PATH), null);
   const { dir, cleanup } = tempDir();
   try {
-    const listed = describeExecutors(config, { PATH: dir });
+    const listed = describeExecutors(config, { PATH: dir, AGENTHUB_RELAY_DISCOVERY: 'off' });
     assert.deepEqual(listed.map(e => e.id), ['codex', 'claude', 'dsh', 'agy', 'acp']);
     assert.ok(listed.filter(e => !e.reserved).every(e => e.available === false));
     assert.deepEqual(listed.find(e => e.id === 'codex').tiers, ['deep']);
@@ -205,9 +206,9 @@ test('availability is looked up on PATH; reserved executors are listed with thei
     assert.equal(listed.find(e => e.id === 'agy').reserved, undefined, 'Antigravity is a live executor');
     assert.equal(listed.find(e => e.id === 'agy').label, 'Antigravity CLI');
 
-    const fakeCodex = path.join(dir, 'codex');
+    const fakeCodex = path.join(dir, windows ? 'codex.exe' : 'codex');
     fs.writeFileSync(fakeCodex, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-    const found = describeExecutors(config, { PATH: dir }).find(e => e.id === 'codex');
+    const found = describeExecutors(config, { PATH: dir, AGENTHUB_RELAY_DISCOVERY: 'off' }).find(e => e.id === 'codex');
     assert.equal(found.available, true);
     assert.equal(found.path, fakeCodex);
   } finally {

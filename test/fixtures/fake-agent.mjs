@@ -2,12 +2,19 @@
 // A stand-in for the executor CLIs in tests. It recognizes which interface it
 // was called through and answers the way that CLI documents:
 //   codex exec --json ... -        JSONL events on stdout, final message to -o
-//   claude -p --output-format json one JSON result on stdout
+//   codex exec resume ... <id> -   the same, continuing thread <id>
+//   claude -p --output-format json one JSON result on stdout; --session-id or
+//                                  --resume name the session it reports
 //   dsh --profile headless "task"  final answer on stdout, exit 0 or 1
-//   agy --input-format stream-json --output-format stream-json
+//   dsh --profile headless --json [--session-id <id>] -
+//                                  the task on stdin, NDJSON session/final events
+//   dsh --profile headless --help  help naming --json and --session-id
+//                                  (FAKE_DSH_LEGACY=1: a dsh without them)
+//   agy --input-format stream-json --output-format stream-json [--conversation <id>]
 //                                  one user event on stdin, NDJSON events out
 //   agy models                     model slugs and display names
-// What it does comes from a line `FAKE {...json...}` in the task text.
+// What it does comes from a line `FAKE {...json...}` in the task text (or in
+// a follow-up message).
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -22,6 +29,15 @@ const mode = args[0] === 'exec' ? 'codex'
 
 if (args[0] === '--version') {
   process.stdout.write('fake-agent 0.0.0\n');
+  process.exit(0);
+}
+
+const after = flag => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
+
+if (mode === 'dsh' && args.includes('--help')) {
+  process.stdout.write(process.env.FAKE_DSH_LEGACY === '1'
+    ? 'Usage: dsh --profile headless [options] [task...]\n'
+    : 'Usage: dsh --profile headless [options] [task...]\n  --json  write events\n  --session-id <id>  adopt a session\n');
   process.exit(0);
 }
 
@@ -108,7 +124,8 @@ function agyPrompt(text) {
   return '';
 }
 
-const prompt = mode === 'dsh' ? args[args.length - 1] : mode === 'agy' ? agyPrompt(await readStdin()) : await readStdin();
+const dshJson = mode === 'dsh' && args.includes('--json');
+const prompt = mode === 'dsh' && !dshJson ? args[args.length - 1] : mode === 'agy' ? agyPrompt(await readStdin()) : await readStdin();
 const match = /^FAKE (\{.*\})$/m.exec(prompt);
 const plan = match ? JSON.parse(match[1]) : {};
 const echoed = plan.echoEnv ? ` ${process.env[plan.echoEnv] ?? ''}` : '';
@@ -151,9 +168,16 @@ if (plan.sleepMs) await new Promise(resolve => setTimeout(resolve, plan.sleepMs)
 
 const failed = plan.fail === true;
 if (mode === 'codex') {
+  const resumed = args[1] === 'resume' ? args[args.length - 2] : undefined;
+  const threadId = resumed ?? plan.threadId ?? 'fake-thread';
+  if (plan.announceThenSleepMs) {
+    // The thread id goes out at once; the turn takes a while.
+    process.stdout.write(`${JSON.stringify({ type: 'thread.started', thread_id: threadId })}\n`);
+    await new Promise(resolve => setTimeout(resolve, plan.announceThenSleepMs));
+  }
   const out = [];
   const emit = event => out.push(JSON.stringify(event));
-  emit({ type: 'thread.started', thread_id: 'fake-thread' });
+  if (!plan.announceThenSleepMs) emit({ type: 'thread.started', thread_id: threadId });
   emit({ type: 'turn.started' });
   if (failed) {
     emit({ type: 'turn.failed', error: { message: 'fake codex failure' } });
@@ -171,14 +195,14 @@ if (mode === 'codex') {
     subtype: failed ? 'error_during_execution' : 'success',
     is_error: failed,
     result: failed ? 'fake claude failure' : message,
-    session_id: 'fake-session',
+    session_id: after('--resume') ?? after('--session-id') ?? 'fake-session',
     total_cost_usd: 0.0123,
     num_turns: 1,
     usage: { input_tokens: 20, output_tokens: 4 },
   })}\n`);
   process.exit(plan.exitCode ?? (failed ? 1 : 0));
 } else if (mode === 'agy') {
-  const id = 'fake-conversation';
+  const id = after('--conversation') ?? 'fake-conversation';
   const out = [
     { event: 'init', conversation_id: id, init: { cwd: process.cwd(), permission_mode: args.includes('accept-edits') ? 'accept-edits' : 'request-review' } },
     { event: 'step_update', step_update: { conversation_id: id, step_index: 0, state: 'DONE', step_type: 'agent_response', text_delta: failed ? '' : message } },
@@ -193,6 +217,15 @@ if (mode === 'codex') {
     } },
   ];
   process.stdout.write(`${out.map(event => JSON.stringify(event)).join('\n')}\n`);
+  process.exit(plan.exitCode ?? (failed ? 1 : 0));
+} else if (mode === 'dsh' && dshJson) {
+  const sessionId = after('--session-id') ?? 'session-fake-1';
+  const lines = [
+    { type: 'session', sessionId, cwd: process.cwd() },
+    ...(failed ? [] : [{ type: 'text', text: message }]),
+    { type: 'final', sessionId, reason: { kind: failed ? 'error' : 'completed' }, text: failed ? '' : message },
+  ];
+  process.stdout.write(`${lines.map(line => JSON.stringify(line)).join('\n')}\n`);
   process.exit(plan.exitCode ?? (failed ? 1 : 0));
 } else if (mode === 'dsh') {
   if (failed) {

@@ -95,12 +95,29 @@ class Capture {
 /**
  * Runs one command in its own process group and resolves when it ends.
  * Never rejects: a command that cannot start resolves with `spawnError`.
- * Output reaches the log, `stdout` and `stderr` with `redact` values replaced.
+ * Output reaches the log, `stdout` and `stderr` with `redact` values replaced;
+ * `onStdoutLine` sees each complete stdout line as it arrives (redacted too),
+ * so a caller can act on an event before the command ends.
  */
-export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, signal, redact = [], shell, platform = process.platform }) {
+export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, signal, redact = [], shell, platform = process.platform, onStdoutLine }) {
   return new Promise(resolve => {
     const started = Date.now();
     const log = logFile ? fs.createWriteStream(logFile, { flags: 'a' }) : null;
+    let pendingLine = '';
+    const lines = text => {
+      if (!onStdoutLine || text === '') return;
+      pendingLine += text;
+      let newline;
+      while ((newline = pendingLine.indexOf('\n')) >= 0) {
+        const line = pendingLine.slice(0, newline).replace(/\r$/, '');
+        pendingLine = pendingLine.slice(newline + 1);
+        try {
+          onStdoutLine(line);
+        } catch {
+          // a listener's mistake must not stop the command
+        }
+      }
+    };
     let logged = 0;
     const toLog = text => {
       if (!log || text === '' || logged >= MAX_LOG_CHARS) return;
@@ -131,7 +148,10 @@ export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, s
       clearTimeout(killTimer);
       clearTimeout(closeTimer);
       signal?.removeEventListener('abort', onAbort);
-      take(stdout, outRedactor.end());
+      const rest = outRedactor.end();
+      take(stdout, rest);
+      lines(rest);
+      if (onStdoutLine && pendingLine !== '') lines('\n');
       take(stderr, errRedactor.end());
       const done = () => resolve({ ...result, timedOut, cancelled, durationMs: Date.now() - started, stdout: stdout.text(), stderr: stderr.text() });
       if (log) log.end(done);
@@ -168,7 +188,11 @@ export function runProcess({ argv, cwd, env, stdin = null, timeoutMs, logFile, s
       else signal.addEventListener('abort', onAbort, { once: true });
     }
 
-    child.stdout.on('data', chunk => take(stdout, outRedactor.push(chunk)));
+    child.stdout.on('data', chunk => {
+      const text = outRedactor.push(chunk);
+      take(stdout, text);
+      lines(text);
+    });
     child.stderr.on('data', chunk => take(stderr, errRedactor.push(chunk)));
     if (stdin !== null) {
       child.stdin.on('error', () => {}); // the command may exit without reading

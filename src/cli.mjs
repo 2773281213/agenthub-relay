@@ -12,6 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { configLayers, configPath, loadConfig, parseRoute, PLANNER_IDS, plannerFromName, SETTABLE_KEYS, userConfigPath, writeSetting } from './config.mjs';
 import { describeExecutors } from './executors.mjs';
+import { installSkills, skillSource, skillTargets } from './install.mjs';
 import { agentDefaults, assertRoute, catalogFor, MODEL_AGENTS } from './models.mjs';
 import { resolveCommand } from './platform.mjs';
 import { serveMcp } from './mcp.mjs';
@@ -41,11 +42,20 @@ Planning:
                  [--model <name>] [--effort <level>] [--title <text>] [--acceptance <text>]
                  [--timeout-minutes <n>]
   agenthub-relay wait [<jobId>...] [--timeout <seconds>]   Until a job ends (default 50 s, at most ${CLI_MAX_WAIT_SECONDS})
-  agenthub-relay result <jobId>              Summary, checks, changed and out-of-scope files, log paths
+  agenthub-relay result <jobId> [--format json|text]   Summary, checks, changed and out-of-scope files, turns, next steps
   agenthub-relay apply <jobId> [--allow-out-of-scope] [--force]
-  agenthub-relay discard <jobId>
+  agenthub-relay discard <jobId> [--force]
   agenthub-relay cancel <jobId>
   agenthub-relay status [<jobId>] [--json]   Jobs in this repository
+
+A job is a conversation with its executor, in its own worktree:
+  agenthub-relay send <jobId> (--message <text> | --message-file <file|->) [--interrupt] [--force] [--session <id>]
+                 Continue the same executor session: fixes after review, an answer, or resuming
+                 an interrupted job. --interrupt stops a running turn first.
+  agenthub-relay takeover <jobId> [--stop] [--open]
+                 How to open the job's session yourself, in the executor's desktop app or a
+                 terminal; --open opens the app, --stop stops a running turn first
+  agenthub-relay collect <jobId>             Hand a taken-over job back: its checks run and its patch is collected again
 
 Settings:
   agenthub-relay config show [--json]        Effective settings and where they come from
@@ -58,6 +68,9 @@ Settings:
 Other:
   agenthub-relay mcp                         Serve the relay_* tools over stdio for any MCP client
   agenthub-relay doctor [--json]             Check the repository, settings and installed executors
+  agenthub-relay install-skills [--to claude|agents|all] [--force] [--dry-run]
+                 Install or update the skill copies in ~/.claude/skills and ~/.agents/skills;
+                 a copy someone changed is reported, and replaced only with --force (after a backup)
   agenthub-relay worker <jobId>              Run one job (dispatch starts this for you)
   agenthub-relay --version
 
@@ -68,6 +81,7 @@ Environment:
   AGENTHUB_RELAY_ROOT          repository to serve (default: CLAUDE_PROJECT_DIR, then the working directory)
   AGENTHUB_RELAY_CONFIG        project configuration file (default: <root>/.agenthub/config.json)
   AGENTHUB_RELAY_USER_CONFIG   user configuration file (default: ~/.config/agenthub-relay/config.json)
+  AGENTHUB_RELAY_DISCOVERY     off: use only PATH to find codex, claude, dsh and agy (default: also their install folders)
 `;
 
 class UsageError extends Error {}
@@ -103,16 +117,20 @@ async function tool(planner, name, args, strip = ['watcher']) {
   return 0;
 }
 
-function readTask(values) {
-  if (values.task !== undefined && values['task-file'] !== undefined) throw new UsageError('Give --task or --task-file, not both');
-  if (values.task !== undefined) return values.task;
-  const file = values['task-file'];
-  if (file === undefined) throw new UsageError('dispatch needs --task <text> or --task-file <file|->');
+function readText(values, flag, what) {
+  if (values[flag] !== undefined && values[`${flag}-file`] !== undefined) throw new UsageError(`Give --${flag} or --${flag}-file, not both`);
+  if (values[flag] !== undefined) return values[flag];
+  const file = values[`${flag}-file`];
+  if (file === undefined) throw new UsageError(`${what} needs --${flag} <text> or --${flag}-file <file|->`);
   try {
     return fs.readFileSync(file === '-' ? 0 : file, 'utf8');
   } catch (err) {
-    throw new UsageError(`Cannot read the task from ${file === '-' ? 'stdin' : file}: ${err.message}`);
+    throw new UsageError(`Cannot read the ${flag} from ${file === '-' ? 'stdin' : file}: ${err.message}`);
   }
+}
+
+function readTask(values) {
+  return readText(values, 'task', 'dispatch');
 }
 
 function number(value, flag) {
@@ -167,7 +185,81 @@ async function oneJob(name, args, flags = {}) {
   const request = { jobId: positionals[0] };
   if (values['allow-out-of-scope']) request.allowOutOfScope = true;
   if (values.force) request.force = true;
+  if (values.stop) request.stop = true;
+  if (values.open) request.open = true;
+  if (values.session) request.session = values.session;
   return tool(values.planner, name, request);
+}
+
+async function send(args) {
+  const { values, positionals } = parse(args, {
+    message: { type: 'string' },
+    'message-file': { type: 'string' },
+    interrupt: { type: 'boolean' },
+    force: { type: 'boolean' },
+    session: { type: 'string' },
+  }, { positionals: 'one' });
+  const request = { jobId: positionals[0], message: readText(values, 'message', 'send') };
+  if (values.interrupt) request.interrupt = true;
+  if (values.force) request.force = true;
+  const session = values.session ?? (process.env.AGENTHUB_RELAY_SESSION || undefined);
+  if (session) request.session = session;
+  return tool(values.planner, 'relay_send', request);
+}
+
+/** `key: value` lines, then `---` and the summary as written, for planners that read text better than escaped JSON. */
+function resultText(result) {
+  const lines = [
+    `job: ${result.id}   executor: ${result.executor}${result.model ? `:${result.model}` : ''}   tier: ${result.tier}   turn: ${result.turn}`,
+    `status: ${result.status}   verification: ${result.verification ?? '-'}   integration: ${result.integration}${result.takenOver ? '   taken over' : ''}`,
+    `title: ${result.title}`,
+  ];
+  if (result.error) lines.push(`error: ${result.error.code}: ${result.error.message}`);
+  lines.push(`changed: ${result.changedFiles.length ? result.changedFiles.join(', ') : 'nothing'}`);
+  if (result.outOfScope.length) lines.push(`out of scope: ${result.outOfScope.join(', ')}`);
+  for (const check of result.checks) lines.push(`check ${check.status}: ${check.command}${check.summary ? `  (${check.summary})` : ''}`);
+  for (const warning of result.warnings) lines.push(`warning: ${warning}`);
+  if (result.native?.sessionId) lines.push(`session: ${result.native.sessionId}`);
+  if (result.usage) lines.push(`usage: ${Object.entries(result.usage).map(([key, value]) => `${key} ${value}`).join(', ')}`);
+  for (const turn of result.turns.length > 1 ? result.turns : []) {
+    lines.push(`turn ${turn.n}: ${turn.kind} by ${turn.by}, ${turn.status}${turn.verification ? `/${turn.verification}` : ''}${turn.message ? ` - ${turn.message.split('\n')[0]}` : ''}`);
+  }
+  lines.push(`patch: ${result.logs.patch}   executor log: ${result.logs.executor}`);
+  for (const step of result.next) lines.push(`next: ${step.cli ?? '-'}  (${step.why})`);
+  lines.push('---', result.summary ?? '');
+  return `${lines.join('\n')}\n`;
+}
+
+async function result(args) {
+  const { values, positionals } = parse(args, { format: { type: 'string' } }, { positionals: 'one' });
+  const format = values.format ?? 'json';
+  if (!['json', 'text'].includes(format)) throw new UsageError('--format must be json or text');
+  const answer = await relayFor(values.planner).call('relay_result', { jobId: positionals[0] });
+  if (format === 'text') {
+    process.stdout.write(resultText(answer));
+    return 0;
+  }
+  print(answer);
+  return 0;
+}
+
+async function installSkillsCommand(args) {
+  const { values } = parse(args, { to: { type: 'string' }, force: { type: 'boolean' }, 'dry-run': { type: 'boolean' } });
+  const to = values.to ?? 'all';
+  const all = skillTargets(process.env);
+  if (!['claude', 'agents', 'all'].includes(to)) throw new UsageError('--to must be claude, agents or all');
+  const targets = to === 'all' ? all : { [to]: all[to] };
+  const results = installSkills({ source: skillSource(), targets, force: values.force === true, dryRun: values['dry-run'] === true, version: VERSION });
+  const conflicts = results.filter(entry => entry.status === 'conflict');
+  print({
+    version: VERSION,
+    source: skillSource(),
+    results,
+    ...(conflicts.length
+      ? { note: 'Copies with changed files were left alone. Look at the files listed, then run again with --force to replace them (each is backed up first).' }
+      : {}),
+  });
+  return conflicts.length ? 1 : 0;
 }
 
 async function status(args) {
@@ -182,9 +274,10 @@ async function status(args) {
     return 0;
   }
   for (const job of jobs) {
-    const state = TERMINAL.has(job.status) ? `${job.status}/${job.integration}` : job.status;
+    const state = `${TERMINAL.has(job.status) ? `${job.status}/${job.integration}` : job.status}${job.takenOver ? ' (taken over)' : ''}`;
     const route = `${job.tier}->${job.executor}${job.model ? `:${job.model}` : ''}`;
-    process.stdout.write(`${job.id}  ${state.padEnd(20)} ${route.padEnd(24)} ${job.verification ?? ''}  ${job.title}\n`);
+    const turn = job.turn > 1 ? `turn ${job.turn}  ` : '';
+    process.stdout.write(`${job.id}  ${state.padEnd(20)} ${route.padEnd(24)} ${job.verification ?? ''}  ${turn}${job.title}\n`);
   }
   return 0;
 }
@@ -377,7 +470,7 @@ async function doctor(args) {
     report.mapping = settings.mapping;
     report.sessionsRequired = settings.sessions.required;
     report.executors = describeExecutors(settings, process.env, agentDefaults({ env: process.env, root: report.root })).map(entry =>
-      entry.available ? { ...entry, version: versionOf(entry.command) } : entry,
+      entry.available ? { ...entry, version: versionOf(entry.foundAt ?? entry.command) } : entry,
     );
   } catch (err) {
     report.configError = err.message;
@@ -398,11 +491,12 @@ async function doctor(args) {
       const tiers = entry.tiers.length ? ` [${entry.tiers.join(', ')}]` : '';
       if (entry.reserved) lines.push(`  ${entry.id.padEnd(7)} reserved   ${entry.reason}${tiers}`);
       else if (entry.available) {
-        lines.push(`  ${entry.id.padEnd(7)} available  ${entry.path}${entry.via === 'direct' ? '' : ` (${entry.via})`}${entry.version ? `  ${entry.version}` : ''}${tiers}`);
+        const where = [entry.via === 'direct' ? null : entry.via, entry.discovered ? 'found outside PATH' : null].filter(Boolean).join(', ');
+        lines.push(`  ${entry.id.padEnd(7)} available  ${entry.path}${where ? ` (${where})` : ''}${entry.version ? `  ${entry.version}` : ''}${tiers}`);
         lines.push(`          model: ${entry.model ?? ownDefault(entry.agentDefault, entry.id)}`);
       }
       else if (entry.problem) lines.push(`  ${entry.id.padEnd(7)} unusable   ${entry.problem}${tiers}`);
-      else lines.push(`  ${entry.id.padEnd(7)} missing    "${entry.command}" is not on PATH${tiers}`);
+      else lines.push(`  ${entry.id.padEnd(7)} missing    "${entry.command}" is not on PATH${entry.command === entry.id ? ' or in its usual install folder' : ''}${tiers}`);
     }
   }
   if (!report.configError) lines.push(`planner sessions: ${report.sessionsRequired ? 'required' : 'not required'}`);
@@ -442,13 +536,21 @@ async function main(argv) {
     case 'wait':
       return wait(rest);
     case 'result':
-      return oneJob('relay_result', rest);
+      return result(rest);
     case 'apply':
       return oneJob('relay_apply', rest, { 'allow-out-of-scope': { type: 'boolean' }, force: { type: 'boolean' } });
     case 'discard':
-      return oneJob('relay_discard', rest);
+      return oneJob('relay_discard', rest, { force: { type: 'boolean' } });
     case 'cancel':
       return oneJob('relay_cancel', rest);
+    case 'send':
+      return send(rest);
+    case 'takeover':
+      return oneJob('relay_takeover', rest, { stop: { type: 'boolean' }, open: { type: 'boolean' } });
+    case 'collect':
+      return oneJob('relay_collect', rest, { session: { type: 'string' } });
+    case 'install-skills':
+      return installSkillsCommand(rest);
     case 'status':
       return status(rest);
     case 'config':

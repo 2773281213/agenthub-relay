@@ -136,7 +136,7 @@ describe('git isolation', () => {
 });
 
 describe('checks', () => {
-  test('exit 0 passes, non-zero fails, a timeout records 124, and the process group is ended', async () => {
+  test('exit 0 passes, non-zero fails, a timeout records 124, and the process group is ended', { skip: process.platform === 'win32' && 'needs /bin/sh job control; Windows tree kills are tested with cancel' }, async () => {
     const { dir, cleanup } = tempDir();
     try {
       const pidFile = path.join(dir, 'grandchild.pid');
@@ -167,7 +167,7 @@ describe('checks', () => {
     assert.deepEqual(notRun(['a'], 'why'), [{ command: 'a', status: 'not-run', exitCode: null, summary: 'why' }]);
   });
 
-  test('checks run in the configured shell; the default is the platform shell', async () => {
+  test('checks run in the configured shell; the default is the platform shell', { skip: process.platform === 'win32' && 'needs /bin/bash and /bin/sh' }, async () => {
     const { dir, cleanup } = tempDir();
     try {
       const bashOnly = '[[ "relay" == r* ]]';
@@ -614,7 +614,7 @@ describe('redaction of credentials passed by name', () => {
       const id = await prepareJob(dir, {
         tier: 'deep',
         scope: ['src'],
-        checks: ['echo "check sees $AGENTHUB_LEAKY_TOKEN"'],
+        checks: [process.platform === 'win32' ? 'echo check sees %AGENTHUB_LEAKY_TOKEN%' : 'echo "check sees $AGENTHUB_LEAKY_TOKEN"'],
         task: fakeTask({ message: 'my token is', echoEnv: 'AGENTHUB_LEAKY_TOKEN', writeEnv: { 'src/key.env': 'AGENTHUB_LEAKY_TOKEN' } }),
       });
       const job = await runWorker({ root: dir, jobId: id });
@@ -624,7 +624,7 @@ describe('redaction of credentials passed by name', () => {
       for (const file of listFiles(path.join(dir, '.agenthub', 'jobs'))) {
         assert.ok(!fs.readFileSync(file, 'utf8').includes(value), `${path.basename(file)} holds the value`);
       }
-      assert.match(fs.readFileSync(path.join(dir, '.agenthub/jobs', id, 'executor.log'), 'utf8'), /debug: \[redacted\]/);
+      assert.match(fs.readFileSync(path.join(dir, '.agenthub/jobs', id, 'turns', '1', 'executor.log'), 'utf8'), /debug: \[redacted\]/);
       assert.match(fs.readFileSync(path.join(dir, '.agenthub/jobs', id, 'patch.diff'), 'utf8'), /\+KEY=\[redacted\]/);
       assert.ok(job.warnings.some(w => /credential passed by name into its changes/.test(w)));
     } finally {

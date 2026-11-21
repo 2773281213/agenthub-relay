@@ -107,7 +107,7 @@ test('shim parsing skips node.exe and reads both %dp0% and %~dp0 forms', () => {
   assert.equal(shimTarget('/x/odd.cmd', '@echo off\r\nnode "%~dp0\\node.exe"\r\n'), null);
 });
 
-test('a .js command runs with this Node.js; POSIX keeps the plain PATH lookup', () => {
+test('a .js command runs with this Node.js; POSIX keeps the plain PATH lookup', { skip: process.platform === 'win32' && 'POSIX executable bits cannot be set on Windows' }, () => {
   const { dir, cleanup } = tempDir();
   try {
     const script = path.join(dir, 'agent.mjs');

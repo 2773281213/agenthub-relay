@@ -1,7 +1,7 @@
 ---
 name: agenthub-relay
 description: Hand coding work to other agents (Codex, Claude Code, DeepSeek Harness, Antigravity) with the bundled relay script or the relay_* MCP tools - confirm with the user which agent and model takes each tier for this planner session, split the work, write a self-contained task with scope and checks, wait, then review and apply or discard. Use when part of a task can be done by another agent in parallel or more cheaply. Not for reviewing architecture or skills.
-when_to_use: Use when the user wants coding work delegated, split or run in parallel across agents, or names an agent or model for part of it, for example "let Codex implement this", "give the mechanical edits to DeepSeek", "have Claude Code take the hard part", "split this up and run it in parallel", "get a second opinion from Codex on this diff", "use opus for the deep tier", "交给 codex 做", "让 dsh 改这几个文件", "分给几个 agent 并行做", "简单的部分用便宜的模型", "让 Claude Code 复核一下", "这次谁来执行、用什么模型". Also use it when a large task has independent, well-specified pieces another agent can do in parallel or more cheaply, when the user mentions agenthub-relay or relay jobs, and to check, apply or discard jobs already dispatched. Not for architecture reviews (birdview-review), skill audits (birdview-compatibility), edits faster to make yourself, work that still needs back-and-forth design, or when you run as an agenthub-relay executor.
+when_to_use: Use when the user wants coding work delegated, split or run in parallel across agents, or names an agent or model for part of it, for example "let Codex implement this", "give the mechanical edits to DeepSeek", "have Claude Code take the hard part", "split this up and run it in parallel", "get a second opinion from Codex on this diff", "use opus for the deep tier", "交给 codex 做", "让 dsh 改这几个文件", "分给几个 agent 并行做", "简单的部分用便宜的模型", "让 Claude Code 复核一下", "这次谁来执行、用什么模型", "让它接着改", "继续被中断的任务", "接管这个任务", "#codex 修一下". Also use it when a large task has independent, well-specified pieces another agent can do in parallel or more cheaply, when the user mentions agenthub-relay or relay jobs, and to check, apply or discard jobs already dispatched. Not for architecture reviews (birdview-review), skill audits (birdview-compatibility), edits faster to make yourself, work that still needs back-and-forth design, or when you run as an agenthub-relay executor.
 ---
 
 # agenthub-relay: delegating to other agents
@@ -30,7 +30,11 @@ If the `relay_*` MCP tools are loaded (the Claude Code plugin loads them), you m
 | `dispatch --session <id> --tier <t> --task-file - [--scope <p>]... [--check <c>]... [--executor <id>] [--model <m>] [--effort <e>] [--title <s>] [--acceptance <s>]` (task on stdin) | `relay_dispatch` |
 | `wait [<id>...] [--timeout <s>]` | `relay_wait` |
 | `result <id>` | `relay_result` |
-| `apply <id> [--allow-out-of-scope] [--force]`, `discard <id>`, `cancel <id>` | `relay_apply`, `relay_discard`, `relay_cancel` |
+| `apply <id> [--allow-out-of-scope] [--force]`, `discard <id> [--force]`, `cancel <id>` | `relay_apply`, `relay_discard`, `relay_cancel` |
+| `send <id> --message-file - [--interrupt]` (message on stdin) | `relay_send` |
+| `takeover <id> [--open] [--stop]`, `collect <id>` | `relay_takeover`, `relay_collect` |
+| `result <id> --format text` | (script only) |
+| `install-skills [--to claude\|agents\|all] [--force]` | (script only) |
 | `status [<id>] [--json]` | `relay_status` |
 | `config show`, `config set <key> <value> [--user]`, `config unset <key> [--user]` | (script only) |
 
@@ -93,6 +97,17 @@ Pass the task on stdin (`--task-file -`) to avoid shell quoting. Never put secre
 4. `cancel <id>` stops a job you no longer need.
 
 A completed job is not proof: "checks passed" covers only what the checks test, and a job without checks is unverified.
+
+Every result has `next`: the steps that make sense from there, each with its tool and command.
+
+## 7. Continue, take over, hand back
+
+A job is a conversation with its executor's own session, in its own worktree. Prefer continuing it to dispatching a new job: the executor keeps its context.
+
+- `send <id> --message-file -`: one more turn in the same session. Use it for fixes after your review, to answer a question its summary asked, or to resume a job that ended `executor-timeout`, `worker-lost` or `cancelled` ("continue from where you stopped"). Its checks run again; the patch is everything since the job began. A running job needs `--interrupt`, which stops the current turn first. `resume-unsupported` means the executor left no session (an old dsh): dispatch a new job.
+- `takeover <id>`: when the user wants to work in the job themselves. Show them what it returns: the desktop app to open it in (`--open` opens it; Claude Code jobs open in the Claude desktop app, Codex jobs through a `codex://` link) and the terminal command with its folder. A running job needs `--stop`. While a job is taken over the relay sends it nothing, apply refuses it, and it keeps its scope.
+- `collect <id>`: once the user says they are done and closed that session, hand it back. Its checks run and its patch is collected again; then review and apply as usual. `branch-diverged` means the worktree left the job's branch: tell the user.
+- A message that mentions an executor with `#` (`#codex fix the flaky test`) asks you to hand that request to that executor through the relay instead of doing it yourself.
 
 ## With Birdview
 

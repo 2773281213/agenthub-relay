@@ -74,7 +74,8 @@ test('a non-Claude MCP client runs the whole relay flow', async () => {
 
     const listed = await server.call('tools/list', {});
     assert.deepEqual(listed.result.tools.map(t => t.name), [
-      'relay_agents', 'relay_session', 'relay_models', 'relay_dispatch', 'relay_status', 'relay_wait', 'relay_result', 'relay_apply', 'relay_discard', 'relay_cancel',
+      'relay_agents', 'relay_session', 'relay_models', 'relay_dispatch', 'relay_send', 'relay_takeover', 'relay_collect',
+      'relay_status', 'relay_wait', 'relay_result', 'relay_apply', 'relay_discard', 'relay_cancel',
     ]);
     for (const t of listed.result.tools) assert.equal(t.inputSchema.type, 'object');
 

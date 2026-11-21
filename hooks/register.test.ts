@@ -11,7 +11,7 @@ import { decide } from './register'
 const MIN = 60_000
 const HOUR = 60 * MIN
 
-type Job = { id: string; status: string; integration?: string; resultFetched?: boolean; title?: string; tier?: string; executor?: string }
+type Job = { id: string; status: string; integration?: string; resultFetched?: boolean; title?: string; tier?: string; executor?: string; turn?: number; takenOver?: boolean }
 type Fork = { read: number; wrote: number }
 
 /** A session with the relay stubbed; `jobs` and `forkReply` can change between steps. */
@@ -184,6 +184,28 @@ test('a watched job that ends wakes the session once; one already ended at first
   expect(w.seen.prompts.length).toBe(1)
   expect(w.seen.prompts[0]).toContain('j1 (codex, deep) ended completed')
   expect(w.seen.prompts[0]).not.toContain('old')
+})
+
+test('a follow-up turn of the same job wakes the session again; a taken-over job does not', async ($, on) => {
+  const w = world($, on)
+  w.seen.jobs = [{ id: 'j1', status: 'running', turn: 1 } as Job, { id: 'j2', status: 'running', turn: 1 } as Job]
+  await w.start()
+  await w.minutes(2)
+  w.seen.jobs = [
+    { id: 'j1', status: 'completed', integration: 'none', resultFetched: false, executor: 'codex', tier: 'deep', turn: 1 } as Job,
+    { id: 'j2', status: 'failed', integration: 'none', resultFetched: false, turn: 1, takenOver: true } as Job,
+  ]
+  await w.minutes(2)
+  expect(w.seen.prompts.length).toBe(1)
+  expect(w.seen.prompts[0]).toContain('Read each job\'s result, then continue your task')
+  expect(w.seen.prompts[0]).not.toContain('j2')
+  // relay_send: the same job runs a second turn, then ends again.
+  w.seen.jobs = [{ id: 'j1', status: 'running', integration: 'none', turn: 2 } as Job]
+  await w.minutes(2)
+  w.seen.jobs = [{ id: 'j1', status: 'completed', integration: 'none', resultFetched: false, executor: 'codex', tier: 'deep', turn: 2 } as Job]
+  await w.minutes(2)
+  expect(w.seen.prompts.length).toBe(2)
+  expect(w.seen.prompts[1]).toContain('j1 (codex, deep) ended completed (turn 2)')
 })
 
 test('an executor process stays inactive: no command, no polling, no fork', async ($, on) => {

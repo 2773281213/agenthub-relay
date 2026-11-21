@@ -64,6 +64,25 @@ $R apply <jobId>                                    # 或 discard / cancel
 
 Claude Code 带插件时也可以直接用 `relay_*` 工具：派发结果里 `watcher.active` 为 true 就结束本轮，mod 会在任务结束时唤醒你。
 
+### 任务是一段对话：续接、接管、交还（0.5）
+
+借鉴 [codex-host](https://github.com/BytePioneer-AI/codex-host) 的做法：委派出去的任务不是一次性脚本，而是执行者自己的原生会话，可以接着聊、可以由人接手。
+
+```sh
+$R send <jobId> --message-file - --planner codex      # 同一个会话、同一个 worktree 跑下一轮：审完提修改、回答它的问题，或续做被中断（超时、worker 丢失、重启）的任务
+$R send <jobId> --interrupt --message "改成…"          # 正在跑的任务：先停下这一轮再发
+$R takeover <jobId> --open                            # 人来接手：Claude 任务在 Claude 桌面应用里打开，Codex 任务给 codex:// 链接，另给终端续接命令
+$R collect <jobId>                                    # 交还：重新跑检查、收集补丁，再照常 apply
+$R result <jobId> --format text                       # 给人和模型读的文本格式；结果里的 next 列出下一步能做什么
+```
+
+- 各执行者的续接方式：codex `exec resume <thread>`，claude 派发时用 `--session-id` 定好会话、之后 `--resume`，dsh `--json` 拿到会话再用 `--session-id`（需要 dsh 0.2 起），agy `--conversation`。拿不到会话 id 就报 `resume-unsupported`。
+- 被接管期间中继不向该会话发任何东西；任务继续占着它的范围，apply 会被拒绝，discard 要 `--force`。
+- 补丁永远是从基线算起的全部改动；每一轮的日志、总结和检查日志在 `.agenthub/jobs/<id>/turns/<n>/`。
+- PATH 里找不到 codex、claude、dsh、agy 时，会去它们常见的安装位置找，包括 Codex Desktop 自带的 codex.exe；你自己配置的命令不会被替换（`AGENTHUB_RELAY_DISCOVERY=off` 关掉）。
+- `install-skills [--to claude|agents|all] [--force]` 更新 `~/.claude/skills` 和 `~/.agents/skills` 里的副本；本地改过的副本只报告，加 `--force` 才在备份后替换。
+- Windows 上修了收尾时偶发的 `git-failed`：后台 worker 没有控制台，它启动的 git 会各自新开一个控制台，被关掉时 git 以 0xC000013A 退出；现在 git 一律隐藏窗口启动，遇到这类退出还会重试。
+
 ### 选择规划者、执行者与模型
 
 - **每个规划者会话先确认**：`session start --planner <自己>` 列出已保存的分工（deep、light、review 各由谁执行、用什么模型和推理强度、各自来自哪里）、各家当前的默认模型、各家可用的模型和核对结果。规划者把这些转告用户，问沿用还是修改；`session confirm <id> --reuse` 沿用，或带 `--deep/--light/--review executor[:model][@effort]` 修改。修改先核对，核对通过才保存（默认本仓库的 `.agenthub/config.json`，`--user` 存到 `~/.config/agenthub-relay/config.json`），下次开会话时作为“已保存的设置”列出。没有确认过的会话不能派发（`session-required`），换了 agent 用别人的会话派发也会被拒（`planner-mismatch`）。脚本或 CI 可用 `config set sessions.required false` 关掉这一步。
@@ -107,6 +126,7 @@ claude plugin validate . # 插件清单与 hooks 模块
 - 真实的 Codex、dsh、Antigravity CLI 没有在本仓库的测试环境里跑过：适配器按各自官方文档写成，用伪造的二进制做契约测试；codex 的推理强度参数写法来自其 `-c` 配置覆盖方式，未在真实 CLI 上验证。
 - 只有 Claude Code 会遵守 `disable-model-invocation`；其他宿主靠 skill 描述里的“仅在用户调用时使用”。
 - Claude Code 以外的规划者没有保活，用 `wait` 轮询。
+- 接管只能在 headless 这一轮停下之后进行（`--stop`）；Codex Desktop 能否打开 `codex exec` 建的线程未经验证，打不开就用终端命令。
 - claude 的模型名只检查格式，写错要到任务运行时才报错；codex 的 `model/list` 属于 app-server 协议，官方标为不稳定，取不到列表时 codex 的模型无法核对、会被拒绝（不指定模型则用它自己的默认）。
 - “问过用户再确认会话”靠 skill 指令约束，relay 只能强制先开会话、再确认。
 - 范围声明和越界审计是事后核对，不是文件系统写锁。
@@ -136,6 +156,8 @@ See [docs/planners.md](docs/planners.md) for each planner. Run `node <skill fold
 ### Use
 
 Follow the [routing skill](skills/agenthub-relay/SKILL.md): start each planner session with `session start` and let the user keep or change the saved roles (`session confirm`), then `dispatch --session <id>` a self-contained task (on stdin with `--task-file -`), `wait`, read `result`, and `apply` (changes land unstaged) or `discard`, passing `--planner <you>` on each command. With the Claude Code plugin you may use the `relay_*` tools instead; if a dispatch result says `watcher.active`, end your turn and the mod wakes you. Keep-alive details: [docs/cache-keepalive.md](docs/cache-keepalive.md).
+
+A job is a conversation with its executor (0.5, after [codex-host](https://github.com/BytePioneer-AI/codex-host)): `send <id> --message-file -` runs another turn in the same native session and worktree (fixes after review, an answer, or resuming a job a timeout, lost worker or reboot interrupted; `--interrupt` stops a running turn first). `takeover <id> [--open] [--stop]` hands it to a person: Claude Code jobs open in the Claude desktop app (`claude --desktop --resume`), Codex jobs get a `codex://threads/<id>` link, and every executor gets a terminal command; while taken over the relay sends it nothing, it keeps its scope, apply is refused and discard needs `--force`. `collect <id>` hands it back: its checks run and its patch is collected again. Results carry `next` hints, and `result --format text` reads well for people and models. Executors not on PATH are found in their usual install folders (Codex Desktop's bundled codex.exe included); a configured command is never replaced. `install-skills` updates the copies in `~/.claude/skills` and `~/.agents/skills`, leaving changed copies alone unless `--force` (after a backup).
 
 ### Choosing planner, executors and models
 
