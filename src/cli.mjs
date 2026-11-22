@@ -216,10 +216,15 @@ async function send(args) {
 function resultText(result) {
   const lines = [
     `job: ${result.id}   executor: ${result.executor}${result.model ? `:${result.model}` : ''}   tier: ${result.tier}   turn: ${result.turn}`,
-    `status: ${result.status}   verification: ${result.verification ?? '-'}   integration: ${result.integration}${result.takenOver ? '   taken over' : ''}`,
+    `status: ${result.status}${result.needsInput ? ' (needs input)' : ''}   verification: ${result.verification ?? '-'}   integration: ${result.integration}${result.takenOver ? '   taken over' : ''}`,
     `title: ${result.title}`,
   ];
   if (result.error) lines.push(`error: ${result.error.code}: ${result.error.message}`);
+  // What a job waiting for an answer asked: answer it with send.
+  for (const question of result.needsInput?.questions ?? []) {
+    lines.push(`question: ${question.text}`);
+    if (question.options?.length) lines.push(`options: ${question.options.join(' / ')}`);
+  }
   lines.push(`changed: ${result.changedFiles.length ? result.changedFiles.join(', ') : 'nothing'}`);
   if (result.outOfScope.length) lines.push(`out of scope: ${result.outOfScope.join(', ')}`);
   for (const check of result.checks) lines.push(`check ${check.status}: ${check.command}${check.summary ? `  (${check.summary})` : ''}`);
@@ -279,7 +284,8 @@ async function status(args) {
     return 0;
   }
   for (const job of jobs) {
-    const state = `${TERMINAL.has(job.status) ? `${job.status}/${job.integration}` : job.status}${job.takenOver ? ' (taken over)' : ''}`;
+    const ended = job.needsInput ? `needs-input/${job.integration}` : `${job.status}/${job.integration}`;
+    const state = `${TERMINAL.has(job.status) ? ended : job.status}${job.takenOver ? ' (taken over)' : ''}`;
     const route = `${job.tier}->${job.executor}${job.model ? `:${job.model}` : ''}`;
     const turn = job.turn > 1 ? `turn ${job.turn}  ` : '';
     process.stdout.write(`${job.id}  ${state.padEnd(20)} ${route.padEnd(24)} ${job.verification ?? ''}  ${turn}${job.title}\n`);

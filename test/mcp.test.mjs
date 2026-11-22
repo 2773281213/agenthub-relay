@@ -9,7 +9,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { test } from 'node:test';
 
-import { CLI, fakeTask, makeRepo, useFakeExecutors, waitFor } from './helpers.mjs';
+import { CLI, contains, fakeTask, makeRepo, useFakeExecutors, waitFor } from './helpers.mjs';
 
 function startServer(dir) {
   // An isolated user configuration (and model cache) for each server.
@@ -89,7 +89,7 @@ test('a non-Claude MCP client runs the whole relay flow', async () => {
     const dispatched = await server.tool('relay_dispatch', {
       tier: 'light',
       scope: ['src/app.txt'],
-      checks: ['grep -q light src/app.txt'],
+      checks: [contains('src/app.txt', 'light')],
       task: fakeTask({ write: { 'src/app.txt': 'light edit\n' }, message: 'edited src/app.txt' }),
     });
     assert.equal(dispatched.data.executor, 'dsh');

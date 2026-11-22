@@ -8,7 +8,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { spawnArgv } from '../src/executors.mjs';
-import { checkShell, childSpawnOptions, envValue, killTree, launcherShim, renameWithRetry, resolveCommand, shimTarget, workerSpawnOptions } from '../src/platform.mjs';
+import { checkShell, childSpawnOptions, envValue, killTree, launcherShim, readFileWithRetry, renameWithRetry, resolveCommand, shimTarget, workerSpawnOptions } from '../src/platform.mjs';
 import { tempDir } from './helpers.mjs';
 
 // The shim npm (cmd-shim) writes for a global package bin.
@@ -161,6 +161,30 @@ test('a rename that Windows refuses for a moment is retried', () => {
   assert.throws(() => renameWithRetry('a', 'b', { fsImpl: broken, delayMs: 1 }), err => err.code === 'ENOENT');
   const stuck = { renameSync: () => { throw Object.assign(new Error('locked'), { code: 'EBUSY' }); } };
   assert.throws(() => renameWithRetry('a', 'b', { fsImpl: stuck, attempts: 3, delayMs: 1 }), err => err.code === 'EBUSY');
+});
+
+test('a read that Windows refuses for a moment is retried, but a missing file is not', () => {
+  let tries = 0;
+  const fsImpl = {
+    readFileSync() {
+      tries += 1;
+      if (tries === 1) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      if (tries === 2) throw Object.assign(new Error('denied'), { code: 'EPERM' });
+      return 'job record';
+    },
+  };
+  assert.equal(readFileWithRetry('job.json', { fsImpl, delayMs: 1 }), 'job record');
+  assert.equal(tries, 3, 'the reader retries both transient codes before succeeding');
+
+  let missingTries = 0;
+  const missing = {
+    readFileSync() {
+      missingTries += 1;
+      throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+    },
+  };
+  assert.throws(() => readFileWithRetry('job.json', { fsImpl: missing, delayMs: 1 }), err => err.code === 'ENOENT');
+  assert.equal(missingTries, 1, 'ENOENT is not retried');
 });
 
 // DSH Desktop's dsh.cmd, as found on the user's Windows machine in the real run.

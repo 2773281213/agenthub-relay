@@ -180,6 +180,20 @@ agenthub-relay 把这个思路做成一个中立的 hub：对上用 MCP 工具�
 5. **codexhost 唤醒**（`src/wake.mjs`）：规划者跑在 Host 能读到的 Thread 里时（派发时用 `thread read` 核实一次，终端里的 Codex CLI 也有 `CODEX_THREAD_ID`，但 Host 够不着），任务记下 `wake.thread`，并按规划者 Thread 起一个常驻 `agenthub-relay wake <thread>`（锁文件记 pid，pid 不在才接手）。它每 15 秒看一次：结束了、没读结果、没 apply/discard、没被接管、这一轮还没通知过的任务合成一条 `thread send`；THREAD_BUSY 就下次再试，最多 6 小时；没有运行中的任务、也没有要通知的就退出。结果里 `watcher.active` 只在真有东西会唤醒时为真。
 6. **worktree 被占用**：codexhost 的 harness 会把它工作过的目录一直当作当前目录，Windows 上删不掉。discard/apply 照样完成、删掉分支，只报告剩下的目录（`warnings`）。
 
+### v0.5.3：评审后的加固
+
+1. **从 job worktree 里调用的 relay 归创建任务的仓库**（`git.jobWorktreeOwner`）：在 `<owner>/.agenthub/worktrees/<id>` 里 `--show-toplevel` 给出的是 worktree，它没有 `.agenthub/`。0.5.2 的防递归按 Thread id 查任务，可 codexhost harness 的 relay 在 worktree 里看到的是空任务表，所以那道防线其实不起作用；现在这样的 worktree 一律解析到创建它的仓库（实测：antigravity harness 在 worktree 里跑 `agents` 得到 role executor、root 为创建者）。`<owner>` 自己也可以是 linked worktree（它的 git common dir 指向另一个 `.git`）：按路径找到记录后，再核对记录里的 job、worktree 和 git common dir 都一致；别的 linked worktree 不受影响。
+2. **执行者能做的更少**：apply、discard、cancel 也拒绝执行者（以前只拦派发、send、接管、交还和改设置）；执行者调 `relay_result` 不算规划者已读，免得吞掉唤醒。`relay_collect` 带了 `session` 就照 send 的规矩核对。
+3. **mod 在 codexhost Thread 里先问角色**：claude-code harness 不传 `settingSources`，会加载用户插件和这个 mod，却没有 `AGENTHUB_RELAY_ROLE`。现在有 `CODEXHOST_THREAD_ID`/`CODEX_THREAD_ID` 时 mod 先保持静默，`session.start` 就 tick 一次问角色（不等第一个分钟 tick），`relay_agents.role` 说是 planner 才启用；角色未知时首条带执行者提及的 prompt 也会先 `checkRole`，再决定是否附上说明。由中继自己唤醒（`job.wake`）的任务 mod 不再唤醒，避免两次。新增 `keep_alive_in_codexhost`（默认 true）：配合自带 Host 侧保活的 codex-host fork 时关掉，避免同一会话被两边各刷一次。
+4. **mod 的两处丢失**：`relay_agents` 失败不再缓存 10 分钟（下个 tick 就重试）；唤醒先提交、成功后才记为已通知。面板显示 needs input，按钮变成 Answer；`#codexhost/<harness>` 提及与候选（候选来自 `relay_agents.codexhost.harnesses`）。这个 harness 列表通常缓存 10 分钟；Host 不可达时的空列表只负缓存 60 秒，第二次 `relay_agents` 不再重复调用 `harness list`。
+5. **waker**：每个 tick 先 reconcile 自己等的运行中任务（worker 崩了也能把 worker-lost 告诉规划者，并且能正常退出）；锁文件整体替换写；`thread send` 超时或无原因失败时，先读 Thread 最新几轮，看消息是否已经到了，到了就不重发（thread send 没有 request id）；`wake.log` 超过 2 MB 换到 `wake.log.1`；tick 的 abort 监听不再累积。不能连上 Host 的规划者 Thread，60 秒后重新核实，不再整个 MCP 进程都当作不可达。
+6. **codexhost 驱动**：`questionsOf` 从每条 pending question 的 `request` 里取问题，按 `turnId` 过滤（缺 `turnId` 的旧轮快照先按 turn 判旧），异步问题不暂停 turn、只在结果里告警；`delegate start` 带 `--request-id agenthub-relay-<jobId>`（实测同一 id 两次返回同一个 Thread），可能已到达 Host 的失败（超时、无错误码）用同一 id 重试一次；`thread cancel` 重试 3 次，仍失败就在任务 warnings 里写明这一轮可能还在 Host 里跑；needs-input 的任务被 discard 或 apply 时取消那一轮。`relay_cancel` 先读未对账的原始记录：仍是 LIVE 就先写 `cancelRequested`（这样对账结果是 cancelled 而不是 worker-lost），再按 worker pid 决定是否取消 Host 的 turn；`releaseThread` 对 `needs-input`、`worker-lost`、`worker-error` 都取消 Thread（空闲 Thread 的 cancel 是安全的空操作），警告会区分“等待提问”和“worker 丢失或崩溃后可能仍在运行”。codexhost CLI 不报 token，用量仍为空；它也没有 archive 命令。
+7. **worker**：分支偏离在跑检查之前就判定（接管后切了分支，不用白跑检查），检查跑完后才偏离时保留实际的 verification（不是一律 not-run）；patch 和顶层 final.md 原子写入，final.md 在任务记为结束之前就位；收集补丁失败时保留已有的执行记录、总结、检查和用量；apply/discard 的 warnings 写回 job record，之后 `relay_result` 仍能看到；Claude 首轮根本没启动（启动失败，或立即退出、stdout 为空）时清掉派发时预设的会话 id，被 stop 或超时的保留。
+8. **0.5.2 的一处崩溃**：harness 没跑起这一轮（Thread 已 completed 却没有 turn，opencode 和 antigravity 都出现过）时，驱动返回的失败缺了 summary，worker 在截断总结时崩成 `worker-error`。0.5.3 的真实冒烟碰到后修掉，任务现在照常记为 `executor-failed` 并写明原因，补了用例。
+9. **agy 与 codexhost/antigravity 的 `/boost`**：任务或追加消息以 `/boost` 开头时，`/boost` 放在整段提示的最前面（两者都只认第一个 token），不必再绕开中继；`defaultTitle` 改用 `leadingCommand`，只剥执行者认识的命令，`/health returns 500` 这类普通前导词留在标题里。Windows 上检查命令同时放行 `cmd /c <check>`、带引号的 `cmd /c "<check>"`、`cmd.exe /c` 以及 `powershell -Command` 形式，并提示 agy 不要改写检查命令；被拒的命令在总结里注明多半是改写过的检查。
+10. **CLI 输出**：`result <id> --format text` 会列出 needs-input 的问题和选项；`status` 把等待回答的任务显示成 needs-input。
+11. **Windows 并发读与换行**：`store.read` 和 `git.jobWorktreeOwner` 读 job.json 时遇到 EPERM/EBUSY/EACCES 会短暂重试，JSON 语法错误不重试，避免原子替换的窗口里漏掉活跃任务；`.gitattributes` 设 `* text=auto eol=lf`，让生成的 skill 脚本副本在各平台逐字节一致。
+
 ## 来源
 
 - [linux.do 话题 3028918](https://linux.do/t/topic/3028918)

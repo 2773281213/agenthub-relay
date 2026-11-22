@@ -11,7 +11,7 @@ import { decide, mentionContext, mentionRows, mentionsIn, wakeText } from './reg
 const MIN = 60_000
 const HOUR = 60 * MIN
 
-type Job = { id: string; status: string; integration?: string; resultFetched?: boolean; title?: string; tier?: string; executor?: string; turn?: number; takenOver?: boolean; resumable?: boolean }
+type Job = { id: string; status: string; integration?: string; resultFetched?: boolean; title?: string; tier?: string; executor?: string; turn?: number; takenOver?: boolean; resumable?: boolean; needsInput?: boolean; wake?: { via?: string } }
 type Fork = { read: number; wrote: number }
 
 /** A session with the relay stubbed; `jobs` and `forkReply` can change between steps. */
@@ -36,6 +36,14 @@ function world($: Engine, on: On, env: Record<string, string> = {}) {
       { id: 'agy', label: 'Antigravity CLI', available: true, tiers: [] },
     ],
     mentionReuse: false,
+    /** What relay_agents says this session is, and how many of its calls fail first. */
+    role: 'planner' as 'planner' | 'executor',
+    agentsFailures: 0,
+    /** How many relay_agents calls throw (an MCP disconnect or timeout) before one succeeds. */
+    agentsThrows: 0,
+    codexhost: undefined as { harnesses: string[]; defaultHarness?: string } | undefined,
+    /** How many prompt submits the engine refuses before it takes one. */
+    submitFailures: 0,
     takeoverReply: {} as unknown,
     copied: [] as string[],
     opened: [] as string[],
@@ -58,7 +66,17 @@ function world($: Engine, on: On, env: Record<string, string> = {}) {
     seen.mcpCalls += 1
     seen.tools.push(e.tool)
     const reply = (body: unknown, isError = false) => ({ value: { content: [{ type: 'text', text: JSON.stringify(body) }], isError } })
-    if (e.tool === 'relay_agents') return reply({ executors: seen.executors, mentionReuse: seen.mentionReuse })
+    if (e.tool === 'relay_agents') {
+      if (seen.agentsThrows > 0) {
+        seen.agentsThrows -= 1
+        throw new Error('the relay MCP server is not connected')
+      }
+      if (seen.agentsFailures > 0) {
+        seen.agentsFailures -= 1
+        return reply({ error: { code: 'not-ready', message: 'starting' } }, true)
+      }
+      return reply({ executors: seen.executors, mentionReuse: seen.mentionReuse, role: seen.role, ...(seen.codexhost ? { codexhost: seen.codexhost } : {}) })
+    }
     if (e.tool === 'relay_takeover') return reply(seen.takeoverReply)
     if (e.tool === 'relay_collect') return reply({ jobId: (e.args as { jobId: string }).jobId, turn: 2, status: 'queued' })
     expect(e.tool).toBe('relay_status')
@@ -71,6 +89,10 @@ function world($: Engine, on: On, env: Record<string, string> = {}) {
     return { value: { isAnswered: true, text: 'OK', usage } }
   })
   on('prompt.submit', (_, e) => {
+    if (seen.submitFailures > 0) {
+      seen.submitFailures -= 1
+      throw new Error('the composer is busy')
+    }
     seen.prompts.push(e.text)
     seen.contexts.push([...(e.context ?? [])])
     return { text: e.text, ...(e.context ? { context: e.context } : {}) }
@@ -325,6 +347,151 @@ test('/relay reports the state and /relay off pauses keep-alive', async ($, on) 
   expect(off.text).toContain('paused (off)')
   await w.minutes(60)
   expect(w.seen.forks).toBe(0)
+})
+
+test('in a codexhost Thread the mod waits for the relay: a relay job harness stays inactive', async ($, on) => {
+  const w = world($, on, { CODEXHOST_THREAD_ID: 'th-1' })
+  w.seen.role = 'executor'
+  w.seen.agentsFailures = 1 // the check at session start does not get through
+  w.seen.jobs = [{ id: 'j1', status: 'running' }]
+  await w.start()
+  for (let i = 0; i < 20 && w.seen.tools.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5))
+  await w.request()
+  await $.prompt.submit({ text: '#codex fix it', wait: false })
+  expect(w.seen.tools).toEqual(['relay_agents', 'relay_agents'], 'prompt.submit asked the role too')
+  expect(w.seen.contexts.at(-1)).toEqual([])
+  await w.minutes(70)
+  expect(w.seen.tools).toEqual(['relay_agents', 'relay_agents'])
+  expect(w.seen.forks).toBe(0)
+})
+
+test('in a codexhost Thread a failing role check lets a mentioned prompt through unchanged', async ($, on) => {
+  const w = world($, on, { CODEXHOST_THREAD_ID: 'th-6' })
+  w.seen.agentsThrows = 2 // session start and the prompt's own check lose the MCP connection
+  await w.start()
+  for (let i = 0; i < 20 && w.seen.tools.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5))
+  expect(w.seen.tools).toEqual(['relay_agents'])
+
+  await $.prompt.submit({ text: '#codex fix the flaky test', wait: false })
+  expect(w.seen.prompts.at(-1)).toBe('#codex fix the flaky test')
+  expect(w.seen.contexts.at(-1)).toEqual([])
+  expect(w.seen.tools).toEqual(['relay_agents', 'relay_agents'], 'the prompt tried the role check once more')
+})
+
+test('in a codexhost Thread a mention asks the role first, so the first note is not dropped', async ($, on) => {
+  const w = world($, on, { CODEXHOST_THREAD_ID: 'th-5' })
+  w.seen.agentsFailures = 1 // the check at session start does not get through
+  await w.start()
+  for (let i = 0; i < 20 && w.seen.tools.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5))
+  expect(w.seen.tools).toEqual(['relay_agents'])
+
+  await $.prompt.submit({ text: '#codex fix the flaky test', wait: false })
+  expect(w.seen.tools).toEqual(['relay_agents', 'relay_agents'], 'prompt.submit asked the role before attaching the note')
+  expect(w.seen.contexts.at(-1)?.[0]).toContain('[agenthub-relay] The user mentioned #codex')
+})
+
+test('in a codexhost Thread a planner wakes up once the relay says so, asking at once and again while it cannot', async ($, on) => {
+  const w = world($, on, { CODEX_THREAD_ID: 'th-2' })
+  w.seen.agentsFailures = 1
+  w.seen.jobs = [{ id: 'j1', status: 'running' }]
+  await w.start()
+  await w.minutes(1)
+  // At the start (refused), then at the first minute (answered), then polling.
+  expect(w.seen.tools.slice(0, 3)).toEqual(['relay_agents', 'relay_agents', 'relay_status'])
+  w.seen.jobs = [{ id: 'j1', status: 'completed', integration: 'none', resultFetched: false, executor: 'codex', tier: 'deep' }]
+  await w.minutes(2)
+  expect(w.seen.prompts.length).toBe(1)
+})
+
+test('in a codexhost Thread /relay asks the relay rather than answering inactive, and the first request still counts for keep-alive', async ($, on) => {
+  const w = world($, on, { CODEXHOST_THREAD_ID: 'th-3' })
+  w.seen.agentsFailures = 1 // the check at the start does not get through
+  w.seen.jobs = [{ id: 'j1', status: 'running' }]
+  await w.start()
+  await w.request() // the planner's first turn, while its role is still being asked
+  const presentation = { isFullscreen: false, columns: 100 }
+  const shown = await $.command.run({ command: 'relay', args: '', origin: { kind: 'composer' }, presentation })
+  expect(shown.text).not.toContain('inactive')
+  expect(shown.text).toContain('keep-alive: on')
+  expect(shown.text).toContain('last request: just now')
+  await w.minutes(56)
+  expect(w.seen.forks).toBe(1)
+})
+
+test('keep_alive_in_codexhost off leaves a codexhost Thread session to the Host to keep warm', { options: { keep_alive_in_codexhost: false } }, async ($, on) => {
+  const w = world($, on, { CODEXHOST_THREAD_ID: 'th-4' })
+  w.seen.jobs = [{ id: 'j1', status: 'running' }]
+  await w.start()
+  await w.request()
+  await w.minutes(70)
+  expect(w.seen.forks).toBe(0)
+  const presentation = { isFullscreen: false, columns: 100 }
+  expect((await $.command.run({ command: 'relay', args: '', origin: { kind: 'composer' }, presentation })).text).toContain('keep-alive: off in settings')
+})
+
+test('a relay_agents call that fails is tried again at the next tick, not ten minutes later', async ($, on) => {
+  const w = world($, on)
+  w.seen.agentsFailures = 1
+  on('prompt.autocomplete', () => ({ suggestions: [] }))
+  await w.start()
+  await w.minutes(1)
+  expect((await $.prompt.autocomplete({ text: '#co', cursor: 3, token: '#co', start: 0 })).suggestions[0].description).toBe('agenthub-relay: codex')
+  await w.minutes(1)
+  expect(w.seen.tools.filter(tool => tool === 'relay_agents').length).toBe(2)
+  expect((await $.prompt.autocomplete({ text: '#co', cursor: 3, token: '#co', start: 0 })).suggestions[0].description).toContain('Codex CLI')
+  await w.minutes(5)
+  expect(w.seen.tools.filter(tool => tool === 'relay_agents').length).toBe(2)
+})
+
+test('a wake the engine refuses is tried again; a job the relay wakes in its codexhost Thread is left to it', async ($, on) => {
+  const w = world($, on)
+  w.seen.jobs = [{ id: 'j1', status: 'running' }, { id: 'j2', status: 'running' }]
+  await w.start()
+  await w.minutes(2)
+  w.seen.submitFailures = 1
+  w.seen.jobs = [
+    { id: 'j1', status: 'completed', integration: 'none', resultFetched: false, executor: 'codex', tier: 'deep' },
+    { id: 'j2', status: 'completed', integration: 'none', resultFetched: false, executor: 'codex', tier: 'deep', wake: { via: 'codexhost' } },
+  ]
+  await w.minutes(1)
+  expect(w.seen.prompts.length).toBe(0)
+  await w.minutes(1)
+  expect(w.seen.prompts.length).toBe(1)
+  expect(w.seen.prompts[0]).toContain('j1 (codex, deep) ended completed')
+  expect(w.seen.prompts[0]).not.toContain('j2')
+  await w.minutes(3)
+  expect(w.seen.prompts.length).toBe(1)
+})
+
+test('the pane shows a job waiting for an answer as such, and its button asks for the answer', async ($, on) => {
+  const w = world($, on)
+  w.seen.jobs = [{ id: 'j4', status: 'failed', integration: 'none', title: 'migrate', tier: 'deep', executor: 'codexhost', turn: 1, resumable: true, needsInput: true }]
+  await w.start()
+  const presentation = { isFullscreen: false, columns: 100 }
+  await $.command.run({ command: 'relay', args: 'jobs', origin: { kind: 'composer' }, presentation })
+  const ui = await $.ui.mount({
+    plugin: 'agenthub-relay',
+    component: 'Pane',
+    requestId: 'relay-jobs',
+    surface: 'desktop',
+    props: { title: 'Relay jobs', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
+  })
+  expect((await ui.find({ type: 'Text', text: /j4 .*needs input/ }))?.text).toContain('codexhost')
+  await ui.press({ key: 'review-j4' })
+  expect(w.seen.prompts.at(-1)).toContain('waiting for an answer')
+  await ui.unmount()
+})
+
+test('codex-host harnesses are mentioned as #codexhost/<harness> and offered once codexhost is typed', () => {
+  expect(mentionsIn('让 #codexhost/antigravity 审，#codexhost 做，#codexhost/pi.')).toEqual(['codexhost/antigravity', 'codexhost', 'codexhost/pi'])
+  expect(mentionsIn('#codex/x and #agy/y')).toEqual([])
+  expect(mentionContext(['codexhost/claude-code'], false)).toContain('relay_dispatch with executor "codexhost/claude-code"')
+  expect(mentionContext(['codexhost'], false)).toContain('codexhost.defaultHarness')
+  const codexhost = { harnesses: ['antigravity', 'pi'], defaultHarness: 'pi' }
+  expect(mentionRows('#co', [], codexhost).map(row => row.text)).toEqual(['#codex', '#codexhost/'])
+  expect(mentionRows('#codexhost', [], codexhost).map(row => row.text)).toEqual(['#codexhost', '#codexhost/antigravity', '#codexhost/pi'])
+  expect(mentionRows('#codexhost/a', [], codexhost).map(row => row.text)).toEqual(['#codexhost/antigravity'])
+  expect(mentionRows('#co', []).map(row => row.text)).toEqual(['#codex'])
 })
 
 test('a job waiting for an answer reads as waiting, not as failed', () => {

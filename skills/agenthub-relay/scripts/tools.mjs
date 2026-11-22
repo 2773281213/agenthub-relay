@@ -17,22 +17,27 @@ import {
 } from './config.mjs';
 import { executorCommand } from './discovery.mjs';
 import { adapterFor, describeExecutors, displayCommand, SESSION_ID } from './executors.mjs';
-import { addWorktree, applyPatch, ensureExcluded, patchIsApplied, removeWorktree, repoRoot, snapshotBase } from './git.mjs';
+import { addWorktree, applyPatch, ensureExcluded, jobWorktreeOwner, patchIsApplied, removeWorktree, repoRoot, snapshotBase } from './git.mjs';
 import { ACCEPTED, agentDefaults, assertRoute, catalogFor, checkRoute, MODEL_AGENTS } from './models.mjs';
 import { openDetached, workerSpawnOptions } from './platform.mjs';
-import { codexhostCommand, ensureWaker, PLANNER_KEEPALIVE, plannerThread, startWakerProcess, threadReachable, wakerState } from './wake.mjs';
-import { holdsScope, isExecutorCaller, isNeedsInput, planDispatch, planSend, scopeConflict } from './policy.mjs';
+import { cancelThread, listHarnesses } from './codexhost.mjs';
+import { codexhostCommand, codexhostEnv, ensureWaker, PLANNER_KEEPALIVE, plannerThread, startWakerProcess, threadReachable, wakerState } from './wake.mjs';
+import { checkSession, holdsScope, isExecutorCaller, isNeedsInput, planDispatch, planSend, scopeConflict } from './policy.mjs';
 import { createSessionStore, describeTiers, isSessionId, newSessionId, plainRoute, routeText } from './session.mjs';
 import {
   createStore, isAbandonedReservation, isAlive, isJobId, LIVE, newJobId, RESERVATIONS, resultFetched, TERMINAL, turnNumber, turnsOf,
 } from './store.mjs';
 
-export const VERSION = '0.5.2';
+export const VERSION = '0.5.3';
 export const MAX_WAIT_SECONDS = 50;
 /** A watcher counts as active while it polled this recently. */
 export const WATCHER_ACTIVE_MS = 3 * 60_000;
 /** How long send with interrupt, and takeover with stop, wait for the running turn to end. */
 export const STOP_WAIT_MS = 30_000;
+/** How long a planner Thread the codexhost Host could not reach is taken as unreachable before it is asked again. */
+export const WAKE_RECHECK_MS = 60_000;
+/** How long the codexhost harness list is kept for the # typeahead. */
+const HARNESS_LIST_MS = 10 * 60_000;
 
 const CLI = fileURLToPath(new URL('./cli.mjs', import.meta.url));
 const POLL_MS = 500;
@@ -217,7 +222,10 @@ export const TOOLS = Object.freeze([
 
 /** The repository the hub serves: an explicit root, Claude Code's project dir, or the working directory. */
 export async function resolveRoot(cwd, env) {
-  return repoRoot(env.AGENTHUB_RELAY_ROOT || env.CLAUDE_PROJECT_DIR || cwd);
+  const top = await repoRoot(env.AGENTHUB_RELAY_ROOT || env.CLAUDE_PROJECT_DIR || cwd);
+  // From inside a job's worktree the relay is the main repository's: that is
+  // where the jobs are, and where a codexhost harness's Thread is recognized.
+  return (await jobWorktreeOwner(top)) ?? top;
 }
 
 /** Starts the detached worker process for a job and returns its pid. */
@@ -430,22 +438,77 @@ export function createRelay({
   /**
    * How this planner is woken when its jobs end, when it is not Claude Code
    * (whose mod does that): through codexhost when it runs in a Thread the
-   * Host can reach, else not at all (it waits with relay_wait). Checked once
-   * per Thread for the life of this relay.
+   * Host can reach, else not at all (it waits with relay_wait). A reachable
+   * Thread is remembered for the life of this relay; an unreachable one is
+   * asked again after WAKE_RECHECK_MS, since the Host may have been
+   * restarting.
    */
   const wakeChecks = new Map();
   async function wakeTarget(settings) {
     const thread = plannerThread(env);
     if (!thread || env.AGENTHUB_RELAY_WAKE === 'off') return null;
-    if (!wakeChecks.has(thread)) {
-      wakeChecks.set(thread, (async () => {
-        const command = codexhostCommand(settings, env, platform);
-        if (!command) return null;
-        const reachable = await threadReachable({ command, thread, env, platform }).catch(() => false);
-        return reachable ? { via: 'codexhost', thread } : null;
-      })());
+    const now = Date.now();
+    const recheckMs = Number(env.AGENTHUB_RELAY_WAKE_RECHECK_MS) > 0 ? Number(env.AGENTHUB_RELAY_WAKE_RECHECK_MS) : WAKE_RECHECK_MS;
+    const cached = wakeChecks.get(thread);
+    if (cached && (cached.target || now - cached.at < recheckMs)) return cached.pending;
+    const entry = { at: now, target: null };
+    entry.pending = (async () => {
+      const command = codexhostCommand(settings, env, platform);
+      if (!command) return null;
+      const reachable = await threadReachable({ command, thread, env, platform }).catch(() => false);
+      entry.target = reachable ? { via: 'codexhost', thread } : null;
+      return entry.target;
+    })();
+    wakeChecks.set(thread, entry);
+    return entry.pending;
+  }
+
+  /** The codexhost harnesses and default harness, for relay_agents (and the # typeahead); nothing without codexhost. */
+  let harnessCache = null;
+  async function codexhostReport(settings) {
+    const command = codexhostCommand(settings, env, platform);
+    if (!command) return {};
+    const now = Date.now();
+    // A list is kept for HARNESS_LIST_MS; an empty one (the Host not
+    // running) for WAKE_RECHECK_MS, so a stopped Host does not cost every
+    // relay_agents call a CLI call of its own.
+    const keptFor = harnessCache?.harnesses.length ? HARNESS_LIST_MS : WAKE_RECHECK_MS;
+    if (!harnessCache || now - harnessCache.at >= keptFor || harnessCache.command !== command) {
+      const harnesses = await listHarnesses({ command, env: codexhostEnv(env), platform }).catch(() => []);
+      // Measure the cache from when the list actually arrived, not from before
+      // the CLI call: a slow Host must not make an empty list stale at once.
+      harnessCache = { at: Date.now(), command, harnesses };
     }
-    return wakeChecks.get(thread);
+    const defaultHarness = settings.executors.codexhost?.harness;
+    return { codexhost: { harnesses: harnessCache.harnesses, ...(defaultHarness ? { defaultHarness } : {}) } };
+  }
+
+  /**
+   * A codexhost job let go while its Thread still has a turn that may be
+   * running: one waiting on a question, or one whose worker was lost or
+   * crashed. Cancel that turn, so the harness stops in the Host. Best effort;
+   * what did not get through is a warning.
+   */
+  async function releaseThread(settings, job) {
+    const code = job.error?.code;
+    if (job.executor !== 'codexhost' || !job.native?.sessionId || !['needs-input', 'worker-lost', 'worker-error'].includes(code)) return null;
+    const command = codexhostCommand(settings, env, platform);
+    const ok = command
+      ? await cancelThread({ command, thread: job.native.sessionId, env: codexhostEnv(env), platform }).catch(() => false)
+      : false;
+    if (ok) return null;
+    const what = code === 'needs-input'
+      ? 'which waits on a question'
+      : 'which may still be running after its worker was lost or crashed';
+    return `The turn of codexhost Thread ${job.native.sessionId}, ${what}, could not be cancelled; stop it in Codex Desktop.`;
+  }
+
+  /** Adds warnings to a job's record, so relay_result shows them later too. Best effort. */
+  async function recordWarnings(store, jobId, warnings) {
+    if (!warnings.length) return;
+    await store.update(jobId, draft => {
+      draft.warnings = [...(draft.warnings ?? []), ...warnings.filter(warning => !(draft.warnings ?? []).includes(warning))];
+    }).catch(() => {});
   }
 
   /** How this caller is woken, for relay_agents. */
@@ -854,10 +917,15 @@ export function createRelay({
           review: 'Read-only investigation; any change is reported out of scope.',
         },
         executors: describeExecutors(settings, env, defaults, { platform }),
+        // The codex-host harnesses a job can name as codexhost/<harness>.
+        ...(await codexhostReport(settings)),
         // How each planner waits: kept warm or not, and why; woken by the
         // Claude Code mod, by codexhost in a Host Thread, or by relay_wait.
         planners: PLANNER_KEEPALIVE,
         wake: await wakeReport(r, settings),
+        // Whether this caller may plan: a mod in a codexhost harness's Claude
+        // Code session asks this before it does anything.
+        role: (await callerRole()) === 'executor' ? 'executor' : 'planner',
       };
     },
 
@@ -1118,6 +1186,11 @@ export function createRelay({
       await refuseExecutor('collect jobs');
       const r = await root();
       const store = createStore(r);
+      // Handing back runs no executor, so no session is required; one that is
+      // named is checked like relay_send's (confirmed, and this planner's).
+      if (args.session !== undefined) {
+        checkSession({ session: sessionFor(r, args.session), caller: plannerId(), required: true });
+      }
       const job = await readJob(store, args.jobId);
       if (LIVE.has(job.status)) throw fail('job-running', `Job ${job.id} is still ${job.status}`);
       return store.withDispatchLock(async () => {
@@ -1201,7 +1274,9 @@ export function createRelay({
       const store = createStore(r);
       let job = await readJob(store, args.jobId);
       const n = turnNumber(job);
-      if (TERMINAL.has(job.status) && !(job.resultFetchedTurn >= n)) {
+      // Read means read by the planner: an executor looking at a job must not
+      // keep the planner from being woken for it.
+      if (TERMINAL.has(job.status) && !(job.resultFetchedTurn >= n) && (await callerRole()) !== 'executor') {
         job = await store.update(job.id, draft => {
           draft.resultFetchedAt = new Date().toISOString();
           draft.resultFetchedTurn = n;
@@ -1256,6 +1331,7 @@ export function createRelay({
     },
 
     async relay_apply(args) {
+      await refuseExecutor('apply jobs');
       const r = await root();
       const store = createStore(r);
       const job = await readJob(store, args.jobId);
@@ -1302,6 +1378,9 @@ export function createRelay({
         delete draft.integrationPid;
         delete draft.integrationAt;
       });
+      const warnings = [];
+      const released = await releaseThread(config(r), reserved);
+      if (released) warnings.push(released);
       let worktreeRemoved = true;
       let leftover;
       try {
@@ -1310,21 +1389,24 @@ export function createRelay({
       } catch {
         worktreeRemoved = false;
       }
+      if (leftover) warnings.push(leftoverWarning(r, leftover));
+      await recordWarnings(store, job.id, warnings);
       return {
         jobId: job.id,
         applied: true,
         files: reserved.changedFiles ?? [],
         worktreeRemoved,
-        ...(leftover ? { warnings: [leftoverWarning(r, leftover)] } : {}),
+        ...(warnings.length ? { warnings } : {}),
         note: 'The changes are in your working tree, unstaged. Review and commit them.',
       };
     },
 
     async relay_discard(args) {
+      await refuseExecutor('discard jobs');
       const r = await root();
       const store = createStore(r);
       const job = await readJob(store, args.jobId);
-      await store.update(job.id, draft => {
+      const reserved = await store.update(job.id, draft => {
         if (!TERMINAL.has(draft.status)) throw fail('job-running', `Job ${draft.id} is still ${draft.status}; cancel it first`);
         const integration = draft.integration ?? 'none';
         if (RESERVATIONS.has(integration)) throw fail('job-busy', `Job ${draft.id} is ${integration}`);
@@ -1336,6 +1418,10 @@ export function createRelay({
         draft.integrationPid = process.pid;
         draft.integrationAt = new Date().toISOString();
       });
+      const warnings = [];
+      // The record as reserved, not as read before: that is the one let go.
+      const released = await releaseThread(config(r), reserved);
+      if (released) warnings.push(released);
       let leftover;
       try {
         ({ leftover } = await removeWorktree(r, job.id));
@@ -1353,26 +1439,46 @@ export function createRelay({
         delete draft.integrationPid;
         delete draft.integrationAt;
       });
-      return { jobId: job.id, discarded: true, ...(leftover ? { warnings: [leftoverWarning(r, leftover)] } : {}) };
+      if (leftover) warnings.push(leftoverWarning(r, leftover));
+      await recordWarnings(store, job.id, warnings);
+      return { jobId: job.id, discarded: true, ...(warnings.length ? { warnings } : {}) };
     },
 
     async relay_cancel(args) {
+      await refuseExecutor('cancel jobs');
       const r = await root();
       const store = createStore(r);
-      const job = await readJob(store, args.jobId);
-      if (TERMINAL.has(job.status)) throw fail('job-finished', `Job ${job.id} already ended ${job.status}`);
+      if (!isJobId(args.jobId)) throw fail('unknown-job', `"${args.jobId}" is not a job id`);
+      // Read before reconciling: a worker that died long ago would otherwise be
+      // a finished job already, and its Host turn would never be cancelled.
+      const raw = store.read(args.jobId);
+      if (TERMINAL.has(raw.status)) throw fail('job-finished', `Job ${raw.id} already ended ${raw.status}`);
       // The worker ends the job itself: on SIGTERM, at startup or at its next
       // heartbeat. A job whose worker is gone is reconciled to cancelled.
-      const flagged = await requestCancel(store, job.id);
-      const pid = flagged.worker?.pid;
-      if (pid && isAlive(pid) && platform === 'win32') {
-        return { jobId: job.id, cancelling: true, note: 'The worker sees the request within a second, stops the executor and ends the job cancelled.' };
+      let flagged = raw;
+      if (LIVE.has(raw.status)) {
+        flagged = await requestCancel(store, raw.id);
+        const pid = flagged.worker?.pid;
+        if (pid && isAlive(pid) && platform === 'win32') {
+          return { jobId: flagged.id, cancelling: true, note: 'The worker sees the request within a second, stops the executor and ends the job cancelled.' };
+        }
+        if (pid && isAlive(pid)) {
+          return { jobId: flagged.id, cancelling: true, note: 'The worker is stopping the executor; the job ends cancelled.' };
+        }
       }
-      if (pid && isAlive(pid)) {
-        return { jobId: job.id, cancelling: true, note: 'The worker is stopping the executor; the job ends cancelled.' };
+      // No worker to stop the turn: a codexhost turn runs in the Host, not in
+      // a process of the relay's, so it is cancelled there.
+      const warnings = [];
+      if (flagged.executor === 'codexhost' && flagged.native?.sessionId) {
+        const command = codexhostCommand(config(r), env, platform);
+        const ok = command
+          ? await cancelThread({ command, thread: flagged.native.sessionId, env: codexhostEnv(env), platform }).catch(() => false)
+          : false;
+        if (!ok) warnings.push(`The turn of codexhost Thread ${flagged.native.sessionId} could not be cancelled; stop it in Codex Desktop.`);
       }
-      const ended = await readJob(store, job.id);
-      return { jobId: job.id, cancelling: !TERMINAL.has(ended.status), status: ended.status };
+      const ended = await readJob(store, flagged.id);
+      if (warnings.length) await recordWarnings(store, flagged.id, warnings);
+      return { jobId: flagged.id, cancelling: !TERMINAL.has(ended.status), status: ended.status, ...(warnings.length ? { warnings } : {}) };
     },
   };
 

@@ -13,6 +13,7 @@
 // logs live under turns/<n>/; the patch is always the whole change since the
 // job's baseline.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -24,6 +25,7 @@ import {
 } from './executors.mjs';
 import { CODEXHOST_ENV, envFor } from './codexhost.mjs';
 import { checkBranch, collectChanges } from './git.mjs';
+import { renameWithRetry } from './platform.mjs';
 import { outOfScope } from './policy.mjs';
 import { createStore, HEARTBEAT_MS, TERMINAL } from './store.mjs';
 
@@ -48,7 +50,8 @@ function readIfExists(file) {
 }
 
 function clip(text, max = MAX_SUMMARY_CHARS) {
-  return text.length > max ? `${text.slice(0, max)}\n[…truncated; full text in final.md]` : text;
+  const value = typeof text === 'string' ? text : '';
+  return value.length > max ? `${value.slice(0, max)}\n[…truncated; full text in final.md]` : value;
 }
 
 function removeFile(file) {
@@ -160,6 +163,27 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
     return final;
   };
 
+  // What this turn has got so far: kept on record even when a later step fails.
+  let parsed = { ok: true, summary: '' };
+  let executorRun;
+  let executorOk = true;
+  let checks;
+  /** The turn's own usage on its entry in `turns`. */
+  const recordUsage = draft => {
+    if (!executorRun) return;
+    const entry = draft.turns.at(-1);
+    entry.durationMs = executorRun.durationMs;
+    const own = turnUsage(job.executor, executorRun.normalizedUsage, draft.turns.slice(0, -1), { resumed: turn.kind !== 'dispatch' });
+    if (own.usage && Object.keys(own.usage).length) entry.usage = own.usage;
+    if (own.sessionUsage) entry.sessionUsage = own.sessionUsage;
+  };
+  // The latest turn's final message is also the job's; it is in place before
+  // the job is recorded as ended, and never seen half written.
+  const publishFinal = () => {
+    const latest = readIfExists(turnFiles.final);
+    if (latest) writeFileAtomic(files.final, latest);
+  };
+
   try {
     const config = loadConfig({ root, env });
     const adapter = adapterFor(job.executor);
@@ -170,15 +194,12 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
     // replaced by [redacted] wherever executor or check output is kept.
     const redact = passed.map(name => executorEnv[name]);
 
-    let parsed = { ok: true, summary: '' };
-    let executorRun;
-    let executorOk = true;
     let cancelled = false;
     let timedOut = false;
     if (turn.kind !== 'collect') {
       const located = locateExecutor(job.executor, executorConfig.command, { env, platform });
       const cfg = { ...executorConfig, command: located.command };
-      const caps = job.executor === 'dsh' ? dshCapabilities(cfg.command, { env: executorEnv, platform }) : {};
+      const caps = { platform, ...(job.executor === 'dsh' ? dshCapabilities(cfg.command, { env: executorEnv, platform }) : {}) };
       const runFiles = { final: turnFiles.final };
       if (turn.kind === 'send' && !job.native?.sessionId) throw fail('resume-unsupported', `Job ${jobId} has no ${job.executor} session to continue`);
       let invocation;
@@ -229,7 +250,7 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
           onSession: saveSession,
         });
         run = driven.run;
-        parsed = redactParsed(driven.parsed, redact);
+        parsed = redactParsed({ ...driven.parsed, summary: driven.parsed.summary ?? '' }, redact);
       } else {
         const launch = spawnArgv(invocation.argv, { env: executorEnv, platform });
         run = await runProcess({
@@ -262,7 +283,19 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
       timedOut = run.timedOut;
       cancelled = run.cancelled;
       executorOk = parsed.ok && !run.timedOut && !run.cancelled;
-      const sessionId = parsed.sessionId && SESSION_ID.test(parsed.sessionId) ? parsed.sessionId : seenSession;
+      let sessionId = parsed.sessionId && SESSION_ID.test(parsed.sessionId) ? parsed.sessionId : seenSession;
+      // Claude Code is given its session id before it starts. A first turn that
+      // never got going (it could not start, or quit at once with nothing on
+      // stdout) left no session under that id; one that was stopped or timed
+      // out did, and keeps it for a takeover or a follow-up.
+      const neverStarted = run.spawnError
+        || (!parsed.sessionId && run.exitCode !== 0 && !run.cancelled && !run.timedOut && String(run.stdout ?? '').trim() === '');
+      if (adapter.presetSession && turn.kind === 'dispatch' && neverStarted) {
+        sessionId = undefined;
+        await store.update(jobId, draft => {
+          if (draft.native) delete draft.native.sessionId;
+        });
+      }
       executorRun = {
         exitCode: run.exitCode,
         signal: run.signal ?? undefined,
@@ -284,8 +317,37 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
       store.appendEvent(jobId, { type: 'executor-finished', ok: executorOk, exitCode: run.exitCode, timedOut: run.timedOut, turn: turn.n });
     }
 
-    let checks;
+    // A worktree moved to another branch or rewritten past its baseline would
+    // turn into a patch of unrelated history: refuse to collect it.
+    const diverged = branch =>
+      finish(
+        draft => {
+          draft.status = cancelled ? 'cancelled' : 'failed';
+          // The checks may have run (the branch moved while they did): say what
+          // they found; the patch is what was not collected.
+          draft.verification = checks.length === 0
+            ? 'unverified'
+            : checks.every(check => check.status === 'not-run') ? 'not-run' : verdict({ executorOk, checks }).verification;
+          draft.executorRun = executorRun;
+          draft.summary = clip(parsed.summary);
+          draft.checkResults = checks;
+          draft.warnings = [...baseWarningsOf(draft), ...(parsed.warnings ?? []), `Changes were not collected: ${branch.reason}. The patch on record is from an earlier turn.`];
+          draft.error = { code: 'branch-diverged', message: `The job's worktree no longer matches its branch: ${branch.reason}.` };
+          draft.turns.at(-1).summary = clip(parsed.summary, MAX_TURN_SUMMARY_CHARS);
+          recordUsage(draft);
+        },
+        { type: 'finished', status: cancelled ? 'cancelled' : 'failed', error: 'branch-diverged' },
+      );
+
     if (!cancelled) {
+      // Checked before the checks too: a worktree that left its branch (a
+      // takeover that switched or rebased it) fails at once, not after them.
+      const before = await checkBranch(worktree, job.branch, job.base.commit);
+      if (!before.ok) {
+        checks = notRun(job.checks, "not run: the worktree left the job's branch");
+        publishFinal();
+        return await diverged(before);
+      }
       await store.update(jobId, draft => {
         if (draft.status !== 'verifying') draft.status = 'verifying';
         draft.executorRun = executorRun;
@@ -308,31 +370,21 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
       checks = notRun(job.checks, 'not run: the job was cancelled');
     }
 
-    // A worktree moved to another branch or rewritten past its baseline would
-    // turn into a patch of unrelated history: refuse to collect it.
+    // Again right before the patch is collected: the checks ran in the worktree.
     const branch = await checkBranch(worktree, job.branch, job.base.commit);
     if (!branch.ok) {
-      return await finish(
-        draft => {
-          draft.status = cancelled ? 'cancelled' : 'failed';
-          draft.verification = checks.length ? 'not-run' : 'unverified';
-          draft.executorRun = executorRun;
-          draft.summary = clip(parsed.summary);
-          draft.checkResults = checks;
-          draft.warnings = [...baseWarningsOf(draft), `Changes were not collected: ${branch.reason}. The patch on record is from an earlier turn.`];
-          draft.error = { code: 'branch-diverged', message: `The job's worktree no longer matches its branch: ${branch.reason}.` };
-          draft.turns.at(-1).summary = clip(parsed.summary, MAX_TURN_SUMMARY_CHARS);
-        },
-        { type: 'finished', status: cancelled ? 'cancelled' : 'failed', error: 'branch-diverged' },
-      );
+      publishFinal();
+      return await diverged(branch);
     }
 
     // The audit runs whatever happened, so the planner sees what was touched.
     const changes = await collectChanges(worktree, job.base.commit, { indexDir: files.dir });
     const patch = redactText(changes.patch, redact);
-    fs.writeFileSync(files.patch, patch);
+    writeFileAtomic(files.patch, patch);
     const strays = job.write ? outOfScope(changes.files, job.scope) : changes.files;
-    const audit = [];
+    // What the executor's driver reported beyond the outcome (codexhost: a
+    // turn that may still run in the Host).
+    const audit = [...(parsed.warnings ?? [])];
     if (patch !== changes.patch) {
       audit.push(
         'The executor wrote the value of a credential passed by name into its changes. The stored patch has [redacted] in its place, so applying it writes [redacted]; review those files.',
@@ -349,7 +401,8 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
     }
 
     const outcome = cancelled ? { status: 'cancelled', verification: checks.length ? 'not-run' : 'unverified' } : verdict({ executorOk, checks });
-    const final = await finish(
+    publishFinal();
+    return await finish(
       draft => {
         draft.status = outcome.status;
         draft.verification = outcome.verification;
@@ -377,26 +430,46 @@ export async function runWorker({ root, jobId, env = process.env, signal: extern
         const entry = draft.turns.at(-1);
         entry.summary = clip(parsed.summary, MAX_TURN_SUMMARY_CHARS);
         entry.changedFiles = changes.files.length;
-        if (executorRun) {
-          entry.durationMs = executorRun.durationMs;
-          const own = turnUsage(job.executor, executorRun.normalizedUsage, draft.turns.slice(0, -1), { resumed: turn.kind !== 'dispatch' });
-          if (own.usage && Object.keys(own.usage).length) entry.usage = own.usage;
-          if (own.sessionUsage) entry.sessionUsage = own.sessionUsage;
-        }
+        recordUsage(draft);
       },
       { type: 'finished', status: outcome.status, verification: outcome.verification, changed: changes.files.length, outOfScope: strays.length },
     );
-    // The latest turn's final message is also the job's.
-    const latest = readIfExists(turnFiles.final);
-    if (latest) fs.writeFileSync(files.final, latest);
-    return final;
   } catch (err) {
+    try {
+      publishFinal();
+    } catch {
+      // the error below is what matters
+    }
     return finish(
       draft => {
         if (!TERMINAL.has(draft.status)) draft.status = 'failed';
         draft.error = { code: err.code ?? 'worker-error', message: err.message };
+        // A failure after the executor ran (collecting the patch, say) keeps
+        // what the turn already got: its run, summary and checks.
+        if (executorRun) draft.executorRun = executorRun;
+        if (parsed.summary) {
+          draft.summary = clip(parsed.summary);
+          draft.turns.at(-1).summary = clip(parsed.summary, MAX_TURN_SUMMARY_CHARS);
+        }
+        if (checks) {
+          draft.checkResults = checks;
+          draft.verification = verdict({ executorOk, checks }).verification;
+        }
+        recordUsage(draft);
       },
       { type: 'finished', status: 'failed', error: err.code ?? 'worker-error' },
     );
+  }
+}
+
+/** Writes a file whole or not at all: a reader never sees it half written. */
+function writeFileAtomic(file, text) {
+  const temp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  fs.writeFileSync(temp, text);
+  try {
+    renameWithRetry(temp, file);
+  } catch (err) {
+    fs.rmSync(temp, { force: true }); // no half-finished file left beside it
+    throw err;
   }
 }

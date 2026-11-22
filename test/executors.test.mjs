@@ -63,7 +63,7 @@ test('dsh takes the task as its positional argument and refuses one that is too 
 test('agy runs the Antigravity CLI with the task as one stream-json user event, edits accepted only for write tiers', () => {
   const agy = adapterFor('agy');
   assert.equal(agy.label, 'Antigravity CLI');
-  const write = agy.invocation(job(), config.executors.agy, files, 'PROMPT "quoted"\nline two');
+  const write = agy.invocation(job(), config.executors.agy, files, 'PROMPT "quoted"\nline two', { platform: 'linux' });
   assert.deepEqual(write.argv, [
     'agy', '--input-format', 'stream-json', '--output-format', 'stream-json', '--mode', 'accept-edits',
     '--settings', JSON.stringify({ permissions: { allow: ['command(npm test)', 'command(npm run lint -- --max-warnings 0)'] } }),
@@ -72,6 +72,16 @@ test('agy runs the Antigravity CLI with the task as one stream-json user event, 
   assert.deepEqual(JSON.parse(write.stdin), { event: 'user', message: { content: 'PROMPT "quoted"\nline two' } });
   assert.equal(write.env.AGY_CLI_DISABLE_AUTO_UPDATE, 'true', 'the CLI does not update itself mid-job');
   assert.ok(!write.argv.includes('-p'), 'a -p prompt is dropped in streaming mode');
+  // On Windows agy's model wraps a check in cmd /c or PowerShell, quoted or
+  // not: those forms of the same check are allowed too.
+  const windows = agy.invocation(job({ checks: ['npm test'] }), config.executors.agy, files, 'P', { platform: 'win32' });
+  assert.deepEqual(JSON.parse(windows.argv[windows.argv.indexOf('--settings') + 1]).permissions.allow, [
+    'command(npm test)',
+    'command(cmd /c npm test)', 'command(cmd /c "npm test")',
+    'command(cmd.exe /c npm test)', 'command(cmd.exe /c "npm test")',
+    'command(powershell -Command npm test)', 'command(powershell -Command "npm test")',
+    'command(powershell.exe -Command npm test)', 'command(powershell.exe -Command "npm test")',
+  ]);
   const unchecked = agy.invocation(job({ checks: [] }), config.executors.agy, files, 'P');
   assert.ok(!unchecked.argv.includes('--settings'), 'no rules without checks');
 
@@ -111,9 +121,10 @@ test('agy output: the result event gives the answer, conversation and usage; err
   // Seen with agy 1.5.2: a denied command ends the turn with an empty response.
   const deniedEarly = agy.parse({ exitCode: 0, stdout: events({ conversation_id: 'conv-1', status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] }), stderr: '' });
   assert.equal(deniedEarly.ok, true, 'the edits it made are still the job');
-  assert.equal(deniedEarly.summary, 'partial\n\nAntigravity denied: command RunCommand.', 'the streamed text stands in for the missing response');
+  const HINT = ' A denied command is often a check agy rewrote (cmd /c …, powershell -Command …); the relay runs the checks itself after the turn.';
+  assert.equal(deniedEarly.summary, `partial\n\nAntigravity denied: command RunCommand.${HINT}`, 'the streamed text stands in for the missing response');
   const deniedSilent = agy.parse({ exitCode: 0, stdout: [JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } })].join('\n'), stderr: '' });
-  assert.equal(deniedSilent.summary, 'Antigravity denied: command RunCommand. It ended its turn without a final message.');
+  assert.equal(deniedSilent.summary, `Antigravity denied: command RunCommand.${HINT} It ended its turn without a final message.`);
   const deniedAfter = agy.parse({ exitCode: 0, stdout: events({ status: 'SUCCESS', response: 'Done.\n', denied_actions: [{ action: 'write_file' }] }), stderr: '' });
   assert.equal(deniedAfter.summary, 'Done.\n\nAntigravity denied: write_file.');
 

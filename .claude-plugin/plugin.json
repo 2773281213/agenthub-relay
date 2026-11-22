@@ -1,7 +1,7 @@
 {
   "name": "agenthub-relay",
   "displayName": "agenthub-relay",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Hand coding jobs to Codex, Claude Code, DeepSeek Harness or Antigravity in isolated git worktrees, and keep a waiting Claude Code planner's prompt cache warm.",
   "author": { "name": "2773281213", "url": "https://github.com/2773281213" },
   "homepage": "https://github.com/2773281213/agenthub-relay",
@@ -42,6 +42,12 @@
       "type": "boolean",
       "title": "Wake the session when a job ends",
       "description": "When a job this session watched ends and nobody has read its result, start a turn that asks Claude to review it.",
+      "default": true
+    },
+    "keep_alive_in_codexhost": {
+      "type": "boolean",
+      "title": "Keep the cache warm in codexhost Threads too",
+      "description": "Also refresh the cache when this session runs in a codex-host Thread. Turn it off when your codex-host Host keeps its Claude Code sessions warm itself, so the session is not refreshed twice.",
       "default": true
     }
   }

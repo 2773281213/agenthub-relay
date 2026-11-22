@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { readFileWithRetry } from './platform.mjs';
+
 const MAX_BUFFER = 256 * 1024 * 1024;
 const MAX_UNTRACKED_LISTED = 20;
 /** How often collecting changes is tried before a git failure is reported. */
@@ -66,6 +68,52 @@ export async function repoRoot(dir) {
   if (code !== 0) throw fail('not-a-git-repo', `${dir} is not inside a git repository`);
   return stdout.trim();
 }
+
+/** A path as the file system names it (links, short names and case resolved), for comparing two of them. */
+function canonical(file) {
+  let real;
+  try {
+    real = fs.realpathSync.native(file);
+  } catch {
+    real = path.resolve(file);
+  }
+  return process.platform === 'win32' ? real.toLowerCase() : real;
+}
+
+async function commonDir(dir) {
+  const { stdout, code } = await git(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir'], { allowFailure: true });
+  return code === 0 && stdout.trim() ? canonical(stdout.trim()) : null;
+}
+
+/**
+ * The folder whose relay a job's worktree belongs to, or null for any other
+ * folder. Inside <owner>/.agenthub/worktrees/<id>, `--show-toplevel` names
+ * the worktree, whose own .agenthub/ does not exist; a relay run from there
+ * (an executor, a codexhost harness, a person looking at a job) belongs to
+ * <owner> and its jobs. <owner> is the relay root that made the job, which
+ * may itself be a linked worktree (its git common dir is then another
+ * folder's .git): it is found from the path, and counts only if it records
+ * this job with this worktree and is of the same repository.
+ */
+export async function jobWorktreeOwner(top) {
+  const resolved = path.resolve(top);
+  const parts = resolved.split(path.sep);
+  const id = parts.at(-1);
+  if (parts.length < 4 || parts.at(-3) !== '.agenthub' || parts.at(-2) !== 'worktrees' || !JOB_DIR.test(id)) return null;
+  const owner = path.resolve(resolved, '..', '..', '..');
+  let record;
+  try {
+    record = JSON.parse(readFileWithRetry(path.join(owner, '.agenthub', 'jobs', id, 'job.json')));
+  } catch {
+    return null; // no job of that relay: some other folder
+  }
+  if (String(record?.worktree ?? '').replace(/\\/g, '/') !== `.agenthub/worktrees/${id}`) return null;
+  const [mine, theirs] = await Promise.all([commonDir(resolved), commonDir(owner)]);
+  return mine && theirs && mine === theirs ? owner : null;
+}
+
+/** The shape of a job id (store.mjs isJobId), checked here without importing the store. */
+const JOB_DIR = /^j\d{8}-\d{6}-[0-9a-f]{6}$/;
 
 export function worktreePath(root, id) {
   return path.join(root, '.agenthub', 'worktrees', id);

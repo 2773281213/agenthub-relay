@@ -25,8 +25,8 @@ import { runProcess } from './checks.mjs';
 import { envFor } from './codexhost.mjs';
 import { locateExecutor } from './discovery.mjs';
 import { BASE_ENV, SESSION_ID, spawnArgv } from './executors.mjs';
-import { workerSpawnOptions } from './platform.mjs';
-import { createStore, isAlive, LIVE, resultFetched, TERMINAL, turnNumber } from './store.mjs';
+import { renameWithRetry, workerSpawnOptions } from './platform.mjs';
+import { createStore, isAlive, LIVE, resultFetched, TERMINAL, turnNumber, writeJsonAtomic } from './store.mjs';
 
 const CLI = fileURLToPath(new URL('./cli.mjs', import.meta.url));
 
@@ -36,6 +36,8 @@ export const WAKE_TICK_MS = 15_000;
 export const NOTICE_TTL_MS = 6 * 60 * 60_000;
 /** Consecutive failed sends that are not THREAD_BUSY before the waker gives up. */
 const MAX_SEND_FAILURES = 3;
+/** The size at which the wakers' log is rotated. */
+const MAX_LOG_BYTES = 2 * 1024 * 1024;
 
 /**
  * Keeping each planner's prompt cache warm while relay jobs run. A refresh
@@ -142,8 +144,9 @@ function releaseWaker(root, thread, pid = process.pid, note) {
   const held = readLock(file);
   if (held?.pid !== pid) return;
   if (note) {
-    // What stopped it stays for status; the pid is gone, so the next job can claim it.
-    fs.writeFileSync(file, JSON.stringify({ ...held, pid: null, endedAt: new Date().toISOString(), note }));
+    // What stopped it stays for status; the pid is gone, so the next job can
+    // claim it. Replaced whole, so a reader never sees half a lock.
+    writeJsonAtomic(file, { ...held, pid: null, endedAt: new Date().toISOString(), note });
     return;
   }
   try {
@@ -174,6 +177,7 @@ export function ensureWaker(root, thread, env, { start = startWakerProcess } = {
 export function startWakerProcess(root, thread, env) {
   const log = path.join(createStore(root).dir, 'wake', 'wake.log');
   fs.mkdirSync(path.dirname(log), { recursive: true });
+  rotateLog(log);
   const fd = fs.openSync(log, 'a');
   try {
     const child = spawn(process.execPath, [CLI, 'wake', thread], {
@@ -189,6 +193,16 @@ export function startWakerProcess(root, thread, env) {
   }
 }
 
+/** The wakers' shared log, cut over to wake.log.1 once it passes MAX_LOG_BYTES. */
+export function rotateLog(log, maxBytes = MAX_LOG_BYTES) {
+  try {
+    if (fs.statSync(log).size <= maxBytes) return;
+    renameWithRetry(log, `${log}.1`);
+  } catch {
+    // no log yet, or a waker has it open: the next start rotates it
+  }
+}
+
 /** Whether a codexhost CLI can be found for waking a planner from `env`. */
 export function codexhostCommand(config, env, platform = process.platform) {
   const configured = config?.executors?.codexhost?.command ?? 'codexhost';
@@ -196,7 +210,8 @@ export function codexhostCommand(config, env, platform = process.platform) {
   return located.resolved ? located.command : null;
 }
 
-function cliEnv(env) {
+/** The environment the relay process's own codexhost calls run with: the allow-listed basics and the variables that find the Host. */
+export function codexhostEnv(env) {
   const base = {};
   for (const name of BASE_ENV) if (env[name] !== undefined) base[name] = env[name];
   return envFor(base, env);
@@ -212,7 +227,7 @@ function argvFor(command, args, env, platform) {
  * planner whose Thread the Host can read is told it will be woken.
  */
 export async function threadReachable({ command, thread, env, platform = process.platform, run = runProcess }) {
-  const childEnv = cliEnv(env);
+  const childEnv = codexhostEnv(env);
   const launch = argvFor(command, ['thread', 'read', thread, '--format', 'json'], childEnv, platform);
   const read = await run({ argv: launch.argv, cwd: undefined, env: { ...childEnv, ...launch.env }, stdin: null, timeoutMs: 20_000, platform });
   if (read.exitCode !== 0) return false;
@@ -234,31 +249,51 @@ export async function runWaker({
 }) {
   if (!claimWaker(root, thread)) return { stopped: 'another-waker' };
   const store = createStore(root);
-  const childEnv = cliEnv(env);
+  const childEnv = codexhostEnv(env);
+  const cli = async (args, stdin = null, timeoutMs = 60_000) => {
+    const launch = argvFor(command, [...args, '--format', 'json'], childEnv, platform);
+    const result = await run({ argv: launch.argv, cwd: root, env: { ...childEnv, ...launch.env }, stdin, timeoutMs, platform });
+    let problem;
+    try {
+      problem = JSON.parse(String(result.stderr ?? '').trim())?.error;
+    } catch {
+      problem = undefined;
+    }
+    return { result, problem };
+  };
+  // A send that timed out or failed for no stated reason may still have
+  // reached the Thread (there is no request id for thread send): the newest
+  // turns show whether it did, so the planner is not woken twice.
+  const delivered = async message => {
+    const { result } = await cli(['thread', 'read', thread, '--view', 'messages'], null, 20_000);
+    if (result.exitCode !== 0) return false;
+    // Compared without the line ends a channel may have changed (CRLF on Windows).
+    const same = text => String(text ?? '').replace(/\r\n?/g, '\n').trim();
+    try {
+      const turns = JSON.parse(String(result.stdout).trim())?.turns ?? [];
+      return turns.slice(0, 3).some(turn => (turn.messages ?? []).some(entry => entry.role === 'user' && same(entry.text) === same(message)));
+    } catch {
+      return false;
+    }
+  };
   let failures = 0;
   let note;
   try {
     for (;;) {
       if (signal?.aborted) return { stopped: 'aborted' };
-      const jobs = store.list().filter(job => job.wake?.thread === thread);
+      // A job whose worker died is still "running" on disk until something
+      // reconciles it; nothing else may, since its planner waits to be woken.
+      const jobs = await Promise.all(store.list()
+        .filter(job => job.wake?.thread === thread)
+        .map(job => (LIVE.has(job.status) ? store.reconcile(job).catch(() => job) : job)));
       const due = pendingNotices(jobs, thread, now());
       if (due.length) {
-        const launch = argvFor(command, ['thread', 'send', thread, '--message-file', '-', '--format', 'json'], childEnv, platform);
-        const sent = await run({
-          argv: launch.argv,
-          cwd: root,
-          env: { ...childEnv, ...launch.env },
-          stdin: wakeMessage(due),
-          timeoutMs: 60_000,
-          platform,
-        });
-        let problem;
-        try {
-          problem = JSON.parse(String(sent.stderr ?? '').trim())?.error;
-        } catch {
-          problem = undefined;
-        }
-        if (sent.exitCode === 0) {
+        const message = wakeMessage(due);
+        const { result: sent, problem: sendProblem } = await cli(['thread', 'send', thread, '--message-file', '-'], message);
+        const problem = sendProblem;
+        const unclear = sent.exitCode !== 0 && problem?.code !== 'THREAD_BUSY' && (sent.timedOut || !problem?.code);
+        const arrived = unclear && (await delivered(message));
+        if (sent.exitCode === 0 || arrived) {
           failures = 0;
           for (const job of due) {
             const n = turnNumber(job);
@@ -269,7 +304,7 @@ export async function runWaker({
           }
           const file = lockFile(root, thread);
           const held = readLock(file);
-          if (held?.pid === process.pid) fs.writeFileSync(file, JSON.stringify({ ...held, lastSentAt: new Date(now()).toISOString() }));
+          if (held?.pid === process.pid) writeJsonAtomic(file, { ...held, lastSentAt: new Date(now()).toISOString() });
           log(`woke ${thread} for ${due.map(job => job.id).join(', ')}`);
         } else if (problem?.code === 'THREAD_BUSY') {
           log(`${thread} is busy; trying again`); // the planner is in a turn: next tick
@@ -285,11 +320,13 @@ export async function runWaker({
         return { stopped: 'idle' };
       }
       await new Promise(resolve => {
-        const timer = setTimeout(resolve, tickMs);
-        signal?.addEventListener('abort', () => {
+        const done = () => {
           clearTimeout(timer);
+          signal?.removeEventListener('abort', done);
           resolve();
-        }, { once: true });
+        };
+        const timer = setTimeout(done, tickMs);
+        signal?.addEventListener('abort', done, { once: true });
       });
     }
   } finally {

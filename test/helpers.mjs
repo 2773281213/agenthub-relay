@@ -88,6 +88,18 @@ export function useFakeExecutors(root, extra = {}) {
   return config;
 }
 
+/**
+ * Check commands that run alike in sh and cmd.exe, with no POSIX tool on
+ * PATH: `test -f` and `grep` are not there in a plain Windows shell.
+ */
+export function exists(file) {
+  return `node -e "process.exit(require('fs').existsSync('${file}') ? 0 : 1)"`;
+}
+
+export function contains(file, text) {
+  return `node -e "process.exit(require('fs').readFileSync('${file}', 'utf8').includes('${text}') ? 0 : 1)"`;
+}
+
 /** A task text the fake executor reads its instructions from. */
 export function fakeTask(plan, prose = 'Do the thing.') {
   return `${prose}\nFAKE ${JSON.stringify(plan)}`;

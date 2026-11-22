@@ -9,9 +9,9 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { loadConfig } from '../src/config.mjs';
-import { adapterFor, buildFollowUpPrompt, displayCommand, dshCapabilities, normalizeUsage, turnUsage } from '../src/executors.mjs';
+import { adapterFor, buildFollowUpPrompt, buildPrompt, displayCommand, dshCapabilities, normalizeUsage, turnUsage } from '../src/executors.mjs';
 import { openDetached } from '../src/platform.mjs';
-import { holdsScope, planSend, PolicyError } from '../src/policy.mjs';
+import { holdsScope, planDispatch, planSend, PolicyError } from '../src/policy.mjs';
 import { checkTransition, createStore, isAbandonedReservation, turnNumber, turnsOf } from '../src/store.mjs';
 import { tempDir } from './helpers.mjs';
 
@@ -284,4 +284,85 @@ test("a Codex turn's usage is its increase over the thread's running total; per-
   assert.deepEqual(turnUsage('codex', { inputTokens: 9 }, [{ n: 1 }], { resumed: true }), { sessionUsage: { inputTokens: 9 } }, 'no earlier total: no own figure');
   assert.deepEqual(turnUsage('claude', { inputTokens: 9 }, [{ n: 1, usage: { inputTokens: 4 } }], { resumed: true }), { usage: { inputTokens: 9 } });
   assert.deepEqual(turnUsage('codex', {}, []), {});
+});
+
+test("a task that starts with agy's /boost keeps it first in the prompt; elsewhere it is plain text", () => {
+  const base = { id: 'j1', tier: 'review', title: 't', write: false, scope: ['.'], checks: [] };
+  const agy = buildPrompt({ ...base, executor: 'agy', task: '/boost Review the parser.' });
+  assert.ok(agy.startsWith('/boost You are an executor dispatched by agenthub-relay'), agy.slice(0, 60));
+  assert.ok(agy.includes('\nReview the parser.\n'));
+  assert.equal(agy.indexOf('/boost', 1), -1, 'once, in front');
+  const codex = buildPrompt({ ...base, executor: 'codex', task: '/boost Review the parser.' });
+  assert.ok(codex.startsWith('You are an executor'));
+  assert.ok(codex.includes('\n/boost Review the parser.\n'));
+  assert.ok(buildPrompt({ ...base, executor: 'agy', task: '/src/x.ts is broken' }).startsWith('You are'), 'a path is no command');
+  assert.ok(buildPrompt({ ...base, executor: 'agy', task: '/plan it' }).startsWith('You are'), 'only the commands agy reads first');
+  const follow = buildFollowUpPrompt({ ...base, executor: 'agy' }, { n: 2, message: '/boost\nLook again.' });
+  assert.ok(follow.startsWith('/boost agenthub-relay follow-up for job j1'));
+  assert.ok(follow.includes('\nLook again.\n'));
+  const checked = buildPrompt({ ...base, executor: 'agy', tier: 'light', write: true, scope: ['src'], checks: ['npm test'], task: 'x' });
+  assert.match(checked, /not through cmd \/c or powershell -Command/, "agy is told not to rewrite a check");
+  assert.doesNotMatch(buildPrompt({ ...base, executor: 'codex', tier: 'light', write: true, scope: ['src'], checks: ['npm test'], task: 'x' }), /cmd \/c/);
+});
+
+test("a relay run from inside a job's worktree belongs to the relay that made the job, also when that relay is a linked worktree", async () => {
+  const { resolveRoot } = await import('../src/tools.mjs');
+  const { git, makeRepo } = await import('./helpers.mjs');
+  const { dir, cleanup } = makeRepo();
+  const other = tempDir();
+  try {
+    const real = file => fs.realpathSync(file);
+    /** A job of the relay at `root`, with its worktree where the relay makes one. */
+    const madeBy = (root, id) => {
+      const worktree = path.join(root, '.agenthub', 'worktrees', id);
+      git(root, 'worktree', 'add', '-q', '-b', `agenthub/${id}`, worktree);
+      createStore(root).create({ id, title: 't', tier: 'review', executor: 'codex', write: false, scope: ['.'], checks: [], worktree: `.agenthub/worktrees/${id}` });
+      return worktree;
+    };
+    const job = madeBy(dir, 'j20261121-000000-abcdef');
+    assert.equal(real(await resolveRoot(job, {})), real(dir));
+    assert.equal(real(await resolveRoot(path.join(job, 'src'), {})), real(dir), 'from a folder inside it too');
+    assert.equal(real(await resolveRoot(dir, {})), real(dir));
+
+    // A planner working in a linked worktree of the repository, as mh-arch is
+    // of mailhub-governance: its git common dir is the main checkout's .git.
+    const linked = path.join(other.dir, 'linked');
+    git(dir, 'worktree', 'add', '-q', '-b', 'feature', linked);
+    assert.equal(real(await resolveRoot(linked, {})), real(linked), 'a linked worktree keeps its own relay');
+    const nested = madeBy(linked, 'j20261121-000000-fedcba');
+    assert.equal(real(await resolveRoot(nested, {})), real(linked), "its job's worktree belongs to it, not to the main checkout");
+
+    // A folder at that place with no job of that id behind it is no job's.
+    const stray = path.join(dir, '.agenthub', 'worktrees', 'j20261121-000000-999999');
+    git(dir, 'worktree', 'add', '-q', '-b', 'stray', stray);
+    assert.equal(real(await resolveRoot(stray, {})), real(stray));
+  } finally {
+    cleanup();
+    other.cleanup();
+  }
+});
+
+test('a task that starts with a slash command takes its default title from what follows', () => {
+  const routed = { ...config, sessions: { required: false } };
+  const plan = request => planDispatch({ request: { tier: 'review', executor: 'agy', ...request }, config: routed });
+  assert.equal(plan({ task: '/boost\nReview the parser.' }).title, 'Review the parser.');
+  assert.equal(plan({ task: '/boost Review the parser.' }).title, 'Review the parser.');
+  assert.equal(plan({ task: '/src/x.ts is broken' }).title, '/src/x.ts is broken', 'a path stays');
+  assert.equal(plan({ task: '/boost' }).title, '/boost', 'nothing else to name it by');
+
+  const antigravity = planDispatch({
+    request: { tier: 'review', executor: 'codexhost/antigravity', task: '/boost Review the parser.' },
+    config: routed,
+  });
+  assert.equal(antigravity.title, 'Review the parser.');
+  assert.equal(antigravity.harness, 'antigravity');
+  assert.ok(buildPrompt({ ...job(), executor: 'codexhost', harness: 'antigravity', task: '/boost Review the parser.' }).startsWith('/boost You are an executor'));
+
+  assert.equal(plan({ executor: 'codex', task: '/health returns 500' }).title, '/health returns 500', 'only commands the executor reads are stripped');
+  const claudeCode = planDispatch({
+    request: { tier: 'review', executor: 'codexhost/claude-code', task: '/boost Review the parser.' },
+    config: routed,
+  });
+  assert.equal(claudeCode.title, '/boost Review the parser.');
+  assert.ok(buildPrompt({ ...job(), executor: 'codexhost', harness: 'claude-code', task: '/boost Review the parser.' }).startsWith('You are an executor'));
 });

@@ -14,7 +14,8 @@ import { fakeTask, git, makeRepo, tempDir, useFakeExecutors, waitFor } from './h
 
 /** A check that passes when every named file exists; plain node, so it runs in sh and cmd.exe alike. */
 const CHECK = "import fs from 'node:fs';\nprocess.exit(process.argv.slice(2).every(file => fs.existsSync(file)) ? 0 : 1);\n";
-const FILES = { 'README.md': '# demo\n', 'src/app.txt': 'app\n', 'docs/guide.md': 'guide\n', 'check.mjs': CHECK };
+const MOVE_BRANCH = "import { execFileSync } from 'node:child_process';\nexecFileSync('git', ['checkout', '-q', '-b', 'elsewhere'], { stdio: 'ignore' });\n";
+const FILES = { 'README.md': '# demo\n', 'src/app.txt': 'app\n', 'docs/guide.md': 'guide\n', 'check.mjs': CHECK, 'move-branch.mjs': MOVE_BRANCH };
 
 function relayFor(dir, extraEnv = {}, options = {}) {
   const env = { ...process.env, AGENTHUB_RELAY_ROOT: dir, ...extraEnv };
@@ -209,6 +210,31 @@ describe('follow-up turns (relay_send)', () => {
   });
 });
 
+test('a branch that moves while the checks run keeps their actual verification, not not-run', async () => {
+  const { dir, cleanup } = makeRepo(FILES);
+  try {
+    useFakeExecutors(dir);
+    const relay = relayFor(dir);
+    const { jobId } = await relay.call('relay_dispatch', {
+      tier: 'deep',
+      executor: 'codex',
+      scope: ['src'],
+      checks: ['node move-branch.mjs'],
+      task: fakeTask({ write: { 'src/a.txt': 'a\n' }, message: 'wrote a' }),
+    });
+    const ended = await settle(relay, jobId);
+    assert.equal(ended.status, 'failed');
+    assert.equal(ended.error, 'branch-diverged');
+    const result = await relay.call('relay_result', { jobId });
+    assert.deepEqual(result.checks.map(check => check.status), ['passed'], 'the check ran and passed before the branch moved');
+    assert.equal(result.verification, 'passed', 'the record keeps what the checks found');
+    assert.equal(result.turns.at(-1).verification, 'passed');
+    assert.match(result.warnings.join('\n'), /Changes were not collected/);
+  } finally {
+    cleanup();
+  }
+});
+
 describe('takeover and collect', () => {
   test('a person takes the job over in its own app, the relay keeps its scope and sends it nothing, and collect re-checks the worktree', async () => {
     const { dir, cleanup } = makeRepo(FILES);
@@ -266,7 +292,7 @@ describe('takeover and collect', () => {
       useFakeExecutors(dir);
       const opened = [];
       const relay = relayFor(dir, { CLAUDECODE: '1' }, { open: async target => (opened.push(target), { ok: true, pid: 1 }) });
-      const { jobId } = await relay.call('relay_dispatch', { tier: 'deep', executor: 'claude', scope: ['src'], task: fakeTask({ sleepMs: 60_000 }) });
+      const { jobId } = await relay.call('relay_dispatch', { tier: 'deep', executor: 'claude', scope: ['src'], checks: ['node check.mjs README.md'], task: fakeTask({ sleepMs: 60_000 }) });
       await waitFor(async () => (await relay.call('relay_status', { jobId })).job.status === 'running', { what: 'the job to start' });
       await assert.rejects(relay.call('relay_takeover', { jobId }), err => err.code === 'job-running');
       const taken = await relay.call('relay_takeover', { jobId, stop: true, open: true });
@@ -282,10 +308,40 @@ describe('takeover and collect', () => {
       const ended = await settle(relay, jobId);
       assert.equal(ended.status, 'failed');
       assert.equal(ended.error, 'branch-diverged');
+      // Found before the checks, which are not run on a worktree that left its branch.
+      const result = await relay.call('relay_result', { jobId });
+      assert.deepEqual(result.checks.map(check => check.status), ['not-run']);
+      assert.match(result.checks[0].summary, /left the job's branch/);
+
+      // A session named on a hand-back is checked: an unconfirmed one is refused.
+      const started = await relay.call('relay_session', { action: 'start', planner: 'claude' });
+      await assert.rejects(relay.call('relay_collect', { jobId, session: started.session }), err => err.code === 'session-required');
     } finally {
       cleanup();
     }
   });
+});
+
+test('a Claude Code job whose first turn never started leaves no session to continue; an executor may not discard it', async () => {
+  const { dir, cleanup } = makeRepo(FILES);
+  try {
+    useFakeExecutors(dir, { claude: { command: path.join(dir, 'no-such-claude.exe') } });
+    const relay = relayFor(dir);
+    const { jobId } = await relay.call('relay_dispatch', { tier: 'review', executor: 'claude', task: fakeTask({ message: 'x' }) });
+    const job = await settle(relay, jobId);
+    assert.equal(job.status, 'failed');
+    assert.equal(job.resumable, false, 'the id chosen at dispatch names no session');
+    assert.equal(jobFile(dir, jobId).native.sessionId, undefined);
+    await assert.rejects(relay.call('relay_send', { jobId, message: 'again' }), err => err.code === 'resume-unsupported');
+
+    const executor = createRelay({ cwd: dir, env: { ...process.env, AGENTHUB_RELAY_ROOT: dir, AGENTHUB_RELAY_ROLE: 'executor' }, clientName: () => 'executor' });
+    for (const tool of ['relay_discard', 'relay_apply', 'relay_cancel']) {
+      await assert.rejects(executor.call(tool, { jobId, force: true }), err => err.code === 'executor-role', tool);
+    }
+    assert.equal((await relay.call('relay_discard', { jobId })).discarded, true);
+  } finally {
+    cleanup();
+  }
 });
 
 describe('apply and discard reserve the job', () => {

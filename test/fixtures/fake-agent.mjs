@@ -160,8 +160,9 @@ for (const [file, name] of Object.entries(plan.writeEnv ?? {})) {
 for (const file of plan.remove ?? []) fs.rmSync(file, { force: true });
 
 if (plan.spawnChild) {
-  // A grandchild that outlives us unless the whole process group is killed.
-  const child = spawn('sleep', ['300'], { stdio: 'ignore' });
+  // A grandchild that outlives us unless the whole process group is killed;
+  // plain node, so no POSIX `sleep` is needed on PATH.
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 300000)'], { stdio: 'ignore', windowsHide: true });
   fs.writeFileSync(plan.spawnChild, String(child.pid));
 }
 if (plan.sleepMs) await new Promise(resolve => setTimeout(resolve, plan.sleepMs));

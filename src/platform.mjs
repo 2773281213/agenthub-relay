@@ -319,6 +319,22 @@ function pause(ms) {
 }
 
 /**
+ * Reads a file another process may replace at the same moment. Windows reports
+ * a reader that loses that race as EPERM, EBUSY or EACCES for a moment, so
+ * those errors are retried; a missing file or any other error is immediate.
+ */
+export function readFileWithRetry(file, { encoding = 'utf8', fsImpl = fs, attempts = 10, delayMs = 15 } = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return fsImpl.readFileSync(file, { encoding });
+    } catch (err) {
+      if (!RETRYABLE_RENAME.has(err.code) || attempt >= attempts) throw err;
+      pause(delayMs);
+    }
+  }
+}
+
+/**
  * Replaces `to` with `from`. Windows refuses while another process has the
  * target open (a reader of job.json, an antivirus scan), so those errors are
  * retried for about a second before giving up.

@@ -1,0 +1,4 @@
+# Text files are stored, and checked out, with LF on every platform, whatever
+# core.autocrlf says: the skill's scripts/ copy is generated from src/ and the
+# tests compare the two.
+* text=auto eol=lf

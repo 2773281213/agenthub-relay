@@ -9,7 +9,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { createRelay } from '../src/tools.mjs';
-import { CLI, fakeTask, makeRepo, tempDir, useFakeExecutors } from './helpers.mjs';
+import { CLI, contains, fakeTask, makeRepo, tempDir, useFakeExecutors } from './helpers.mjs';
 
 /** Runs the CLI in a repository with an isolated user config file. */
 function cli(root, args, { input, env = {}, script = CLI } = {}) {
@@ -55,7 +55,7 @@ test('a planner runs dispatch, wait, result and apply through the CLI', () => {
   const { dir, cleanup } = setup();
   try {
     const task = fakeTask({ write: { 'src/app.txt': 'from the cli\n' }, message: 'edited src/app.txt' });
-    const dispatched = cli(dir, ['dispatch', '--tier', 'light', '--scope', 'src/app.txt', '--check', 'grep -q cli src/app.txt', '--task-file', '-', '--planner', 'claude'], { input: task });
+    const dispatched = cli(dir, ['dispatch', '--tier', 'light', '--scope', 'src/app.txt', '--check', contains('src/app.txt', 'cli'), '--task-file', '-', '--planner', 'claude'], { input: task });
     assert.equal(dispatched.code, 0, dispatched.stderr || dispatched.stdout);
     assert.equal(dispatched.json.executor, 'dsh');
     assert.equal(dispatched.json.planner, 'claude');
@@ -188,6 +188,10 @@ test('a planner session from the command line: start, confirm, then dispatch wit
     const other = cli(dir, ['dispatch', '--tier', 'review', '--task', 'x', '--planner', 'claude'], { env: { AGENTHUB_RELAY_SESSION: id } });
     assert.equal(other.json.error.code, 'planner-mismatch');
 
+    // Let both real workers finish before cleanup removes their worktrees.
+    waitDone(dir, dispatched.json.jobId);
+    waitDone(dir, fromEnv.json.jobId);
+
     for (const args of [['session'], ['session', 'confirm'], ['session', 'start', '--planner', 'cursor'], ['models', 'check']]) {
       assert.equal(cli(dir, args).code, 2, args.join(' '));
     }
@@ -299,6 +303,37 @@ test('the wait limit belongs to the caller: 50 seconds over MCP, longer from the
     assert.ok(Date.now() - started >= 2_500, 'a longer limit lets the caller wait as long as it asked');
     await cliLike.call('relay_cancel', { jobId });
     assert.equal(waitDone(dir, jobId).status, 'cancelled');
+  } finally {
+    cleanup();
+  }
+});
+
+test('result --format text shows what a job waiting for an answer asked, and status lists it as needs-input', async () => {
+  const { createStore, newJobId } = await import('../src/store.mjs');
+  const { dir, cleanup } = setup();
+  try {
+    const store = createStore(dir);
+    const id = newJobId();
+    store.create({
+      id, title: 'migrate the parser', tier: 'deep', executor: 'codexhost', harness: 'fakeh', write: true, scope: ['src'], checks: [],
+      worktree: `.agenthub/worktrees/${id}`, turns: [{ n: 1, kind: 'dispatch', by: 'planner', status: 'queued' }],
+    });
+    await store.update(id, draft => {
+      draft.status = 'running';
+    });
+    await store.update(id, draft => {
+      draft.status = 'failed';
+      draft.endedAt = new Date().toISOString();
+      draft.error = { code: 'needs-input', message: 'The harness is waiting for an answer to its question.' };
+      draft.needsInput = { questions: [{ id: 'i-1', text: 'Overwrite the old file?', options: ['yes', 'no'] }] };
+      Object.assign(draft.turns[0], { status: 'failed', error: 'needs-input' });
+    });
+    const text = cli(dir, ['result', id, '--format', 'text']);
+    assert.equal(text.code, 0, text.stderr);
+    assert.match(text.stdout, /status: failed \(needs input\)/);
+    assert.match(text.stdout, /question: Overwrite the old file\?\noptions: yes \/ no/);
+    const listed = cli(dir, ['status']);
+    assert.match(listed.stdout, new RegExp(`${id}\\s+needs-input/none`));
   } finally {
     cleanup();
   }

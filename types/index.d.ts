@@ -38,6 +38,8 @@ export type RelayPaneJob = {
   turn: number
   takenOver: boolean
   resumable: boolean
+  /** The turn stopped on a question the executor asked (codexhost). */
+  needsInput: boolean
 }
 
 declare module 'claude-code' {

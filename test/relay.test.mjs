@@ -19,7 +19,7 @@ import { planDispatch } from '../src/policy.mjs';
 import { createStore, isAlive, newJobId } from '../src/store.mjs';
 import { createRelay } from '../src/tools.mjs';
 import { runWorker } from '../src/worker.mjs';
-import { fakeTask, git, listFiles, makeRepo, sleep, tempDir, useFakeExecutors, waitFor } from './helpers.mjs';
+import { contains, exists, fakeTask, git, listFiles, makeRepo, sleep, tempDir, useFakeExecutors, waitFor } from './helpers.mjs';
 
 /** What relay_dispatch does before it starts a worker, for in-process tests. */
 async function prepareJob(root, request) {
@@ -186,8 +186,16 @@ describe('checks', () => {
       // On Windows the tree of an exited process cannot be found; simulate that
       // by not killing the group (platform win32) while a grandchild keeps stdout.
       const started = Date.now();
+      // A child that exits while its own child keeps the stdout pipe open
+      // (plain node, so it needs no POSIX shell).
+      const leave = [
+        "const { spawn } = require('child_process');",
+        "const kid = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { cwd: require('os').tmpdir(), stdio: ['ignore', 'inherit', 'inherit'] });",
+        "console.log('started ' + kid.pid);",
+        'kid.unref();',
+      ].join(' ');
       const run = await runProcess({
-        argv: ['sh', '-c', 'sleep 30 & echo started'],
+        argv: [process.execPath, '-e', leave],
         cwd: dir,
         env: process.env,
         platform: 'win32',
@@ -195,6 +203,12 @@ describe('checks', () => {
       assert.equal(run.exitCode, 0);
       assert.match(run.stdout, /started/);
       assert.ok(Date.now() - started < 10_000, 'the close grace period ends the wait');
+      const leftover = Number(/started (\d+)/.exec(run.stdout)?.[1]);
+      try {
+        process.kill(leftover);
+      } catch {
+        // gone already
+      }
     } finally {
       cleanup();
     }
@@ -217,7 +231,7 @@ describe('worker', () => {
       const id = await prepareJob(dir, {
         tier: 'deep',
         scope: ['src/api'],
-        checks: ['test -f src/api/new.txt'],
+        checks: [exists('src/api/new.txt')],
         task: fakeTask({
           write: { 'src/api/new.txt': 'new\n', 'README.md': '# rewritten\n' },
           message: 'added src/api/new.txt',
@@ -308,7 +322,7 @@ describe('worker', () => {
       const checkFails = await prepareJob(dir, {
         tier: 'light',
         scope: ['src/app.txt'],
-        checks: ['grep -q never src/app.txt'],
+        checks: [contains('src/app.txt', 'never')],
         task: fakeTask({ write: { 'src/app.txt': 'changed\n' } }),
       });
       const failedChecks = await runWorker({ root: dir, jobId: checkFails });
@@ -421,7 +435,7 @@ describe('relay tools (real worker processes)', () => {
       const dispatched = await relay.call('relay_dispatch', {
         tier: 'deep',
         scope: ['src'],
-        checks: ['test -f src/new.txt'],
+        checks: [exists('src/new.txt')],
         task: fakeTask({ write: { 'src/new.txt': 'from codex\n' }, message: 'wrote src/new.txt' }, 'Add src/new.txt.'),
       });
       assert.equal(dispatched.executor, 'codex');

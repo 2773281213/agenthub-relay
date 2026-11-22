@@ -121,13 +121,36 @@ function ruleLines(job) {
   return lines;
 }
 
+function adapterOf(job) {
+  try {
+    return adapterFor(job.executor);
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * A command the executor reads only as the first token of its prompt, such
+ * as agy's /boost, when `text` starts with one: `{ lead, text }` with the
+ * command taken off the text. Any other leading word stays where it is.
+ */
+export function leadingCommand(job, text) {
+  const declared = adapterOf(job).leadingCommands;
+  // A list, or (codexhost) one that depends on the job's harness.
+  const names = (typeof declared === 'function' ? declared(job) : declared) ?? [];
+  const match = /^\s*(\/[A-Za-z][\w-]*)(?=\s|$)/.exec(text ?? '');
+  if (!match || !names.includes(match[1].toLowerCase())) return { lead: '', text: text ?? '' };
+  return { lead: match[1].toLowerCase(), text: text.slice(match[0].length).replace(/^[ \t]*\r?\n?/, '') };
+}
+
 /** The instructions every executor receives, whichever agent it is. */
 export function buildPrompt(job) {
+  const { lead, text } = leadingCommand(job, job.task);
   const lines = [
     `You are an executor dispatched by agenthub-relay (job ${job.id}, ${job.tier} tier).`,
     `Task: ${job.title}`,
     '',
-    job.task,
+    text,
     '',
   ];
   if (job.acceptance) lines.push('Acceptance criteria:', job.acceptance, '');
@@ -139,17 +162,19 @@ export function buildPrompt(job) {
   );
   if (job.checks?.length) {
     lines.push(`- When you finish, agenthub-relay runs these checks in this directory: ${job.checks.map(c => `\`${c}\``).join(', ')}. Run them yourself first if you can.`);
+    if (adapterOf(job).checkRule) lines.push(adapterOf(job).checkRule);
   }
   lines.push('- Finish with a short summary: what you changed, how you verified it, and anything left undone.');
-  return lines.join('\n');
+  return `${lead ? `${lead} ` : ''}${lines.join('\n')}`;
 }
 
 /** The message a follow-up turn sends into the executor's own session. */
 export function buildFollowUpPrompt(job, turn) {
+  const { lead, text } = leadingCommand(job, turn.message ?? '');
   const lines = [
     `agenthub-relay follow-up for job ${job.id} (${job.tier} tier), turn ${turn.n}:`,
     '',
-    turn.message ?? '',
+    text,
     '',
     'The rules of this job still hold:',
     '- Work only inside the current directory, the job\'s git worktree.',
@@ -157,9 +182,10 @@ export function buildFollowUpPrompt(job, turn) {
   ];
   if (job.checks?.length) {
     lines.push(`- When you finish, agenthub-relay runs these checks again: ${job.checks.map(c => `\`${c}\``).join(', ')}.`);
+    if (adapterOf(job).checkRule) lines.push(adapterOf(job).checkRule);
   }
   lines.push('- Finish with a short summary of this turn: what you changed, how you verified it, and anything left undone.');
-  return lines.join('\n');
+  return `${lead ? `${lead} ` : ''}${lines.join('\n')}`;
 }
 
 function lastJsonObject(text) {
@@ -305,6 +331,8 @@ const ADAPTERS = Object.freeze({
   claude: {
     label: 'Claude Code',
     resumable: true,
+    // The session id is chosen at dispatch (--session-id), before Claude Code runs.
+    presetSession: true,
     invocation(job, cfg, files, prompt) {
       // In -p mode anything that would ask for permission is denied, so a
       // review needs no mode (the newer "manual" is "default" in older
@@ -414,11 +442,17 @@ const ADAPTERS = Object.freeze({
   agy: {
     label: 'Antigravity CLI',
     resumable: true,
-    invocation(job, cfg, files, prompt) {
-      return agyInvocation(job, cfg, prompt, []);
+    // Commands agy reads only as the first token of the prompt: a task or a
+    // follow-up that starts with one keeps it there, ahead of the relay's
+    // instructions (`/boost` asks for its strongest reasoning).
+    leadingCommands: ['/boost'],
+    // A check rewritten into another shell is denied, and a denial ends agy's turn.
+    checkRule: '- Run each check exactly as written above, not through cmd /c or powershell -Command: a rewritten command is denied, and a denied command ends your turn.',
+    invocation(job, cfg, files, prompt, caps = {}) {
+      return agyInvocation(job, cfg, prompt, [], caps.platform);
     },
-    resume(job, cfg, files, prompt, sessionId) {
-      return agyInvocation(job, cfg, prompt, ['--conversation', sessionId]);
+    resume(job, cfg, files, prompt, sessionId, caps = {}) {
+      return agyInvocation(job, cfg, prompt, ['--conversation', sessionId], caps.platform);
     },
     sessionFromLine(line) {
       const event = jsonLine(line);
@@ -444,7 +478,8 @@ const ADAPTERS = Object.freeze({
         .filter(Boolean);
       let summary = typeof result?.response === 'string' && result.response.trim() ? result.response : streamed.trim();
       if (denied.length) {
-        const note = `Antigravity denied: ${denied.join(', ')}.`;
+        const commands = denied.some(entry => /^command\b/i.test(entry));
+        const note = `Antigravity denied: ${denied.join(', ')}.${commands ? ' A denied command is often a check agy rewrote (cmd /c …, powershell -Command …); the relay runs the checks itself after the turn.' : ''}`;
         summary = summary ? `${summary.trimEnd()}\n\n${note}` : `${note} It ended its turn without a final message.`;
       }
       let error;
@@ -479,10 +514,14 @@ const ADAPTERS = Object.freeze({
     label: 'codex-host',
     resumable: true,
     drive: driveCodexhost,
+    // The antigravity harness is Antigravity: /boost stays first for it too.
+    leadingCommands: job => (job.harness === 'antigravity' ? ['/boost'] : []),
     sessionFromLine() {
       return undefined; // the driver reports the Thread id itself
     },
     usage() {
+      // The codexhost CLI reports no tokens: thread read and wait document no
+      // usage field (the Host keeps its own usage statistics).
       return {};
     },
     takeover({ command, sessionId }) {
@@ -504,7 +543,28 @@ function claudeTail(argv, job, cfg) {
   return argv;
 }
 
-function agyInvocation(job, cfg, prompt, extra) {
+/**
+ * The allow rules for a job's checks. On Windows agy runs commands through
+ * PowerShell, and its model rewrites a check as `cmd /c <check>`, which the
+ * plain rule does not match (seen in real runs); the same check behind
+ * cmd /c is allowed too.
+ */
+function checkRules(checks, platform) {
+  const rules = [];
+  for (const check of checks) {
+    rules.push(`command(${check})`);
+    if (platform !== 'win32') continue;
+    // The forms agy's model wraps a check in: through cmd, with or without
+    // quotes, and through PowerShell, which runs its commands on Windows.
+    const quoted = `"${check.replace(/"/g, '\\"')}"`;
+    for (const shell of ['cmd /c', 'cmd.exe /c', 'powershell -Command', 'powershell.exe -Command']) {
+      rules.push(`command(${shell} ${check})`, `command(${shell} ${quoted})`);
+    }
+  }
+  return rules;
+}
+
+function agyInvocation(job, cfg, prompt, extra, platform = process.platform) {
   // Streaming input takes the task on stdin, so its length is not bound by
   // the command line; closing stdin ends the run after this one turn.
   const argv = [cfg.command, '--input-format', 'stream-json', '--output-format', 'stream-json', ...extra];
@@ -516,7 +576,7 @@ function agyInvocation(job, cfg, prompt, extra) {
   let settings;
   if (job.write) {
     argv.push('--mode', 'accept-edits');
-    if (job.checks?.length) settings = { permissions: { allow: job.checks.map(check => `command(${check})`) } };
+    if (job.checks?.length) settings = { permissions: { allow: checkRules(job.checks, platform) } };
   } else {
     settings = { permissions: { deny: ['write_file(*)', 'command(*)'] } };
   }

@@ -92,7 +92,7 @@ Install the plugin. It brings the four skills, the MCP server, the mod (keep-ali
 
 From a shell: `claude plugin install agenthub-relay --marketplace 2773281213/agenthub-relay`. In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `2773281213/agenthub-relay`, then Add plugin.
 
-Mods load in Claude Code 2.1.287 and later. The plugin's options (`keep_alive`, `interval_minutes`, `ceiling_hours`, `wake_on_finish`) appear in `/config`. With the plugin, Claude Code is recognized as the planner from its MCP client name; jobs it dispatches through the script are kept warm and woken for too, because the mod reads the same job store.
+Mods load in Claude Code 2.1.287 and later. The plugin's options (`keep_alive`, `interval_minutes`, `ceiling_hours`, `wake_on_finish`, `keep_alive_in_codexhost`) appear in `/config`. With the plugin, Claude Code is recognized as the planner from its MCP client name; jobs it dispatches through the script are kept warm and woken for too, because the mod reads the same job store. In a codexhost Thread, `keep_alive_in_codexhost` (default `true`) also lets the mod refresh that session. Turn it off when your codex-host fork keeps its own Host-side sessions warm, so the same conversation is not refreshed twice.
 
 ## Optional: MCP for other planners
 

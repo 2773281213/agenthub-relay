@@ -33,6 +33,8 @@ Every minute, while you have the plugin enabled and this process is not an execu
 - the last main-conversation request or refresh started at least `interval_minutes` (55) ago, but less than 60 minutes ago, so the cache is presumed warm;
 - your last real request was less than `ceiling_hours` (8) ago.
 
+In a codexhost Thread, `keep_alive_in_codexhost` (default `true`) decides whether the mod keeps that session warm too. Turn it off when your codex-host fork already keeps its own Host-side Claude Code sessions warm: both refreshing the same conversation would waste a request and can confuse the cache statistics.
+
 The refresh is `$.model.fork`: one tool-less question over the session's own transcript exactly as the main thread last sent it, same model and system prompt, so the API serves that prefix from the cache. It adds nothing to the transcript. The mod records how many tokens the fork read from the cache and how many it wrote. If it wrote more than it read, the entry had already lapsed: the mod pauses keep-alive and tells you to set the one-hour TTL.
 
 When a job the session watched ends and nobody has read its result, the mod submits one prompt so Claude reviews it (`wake_on_finish`). Only a job seen running is announced, never one that had ended before the session started.

@@ -52,7 +52,7 @@ Dispatch works only inside a planner session the user confirmed (`session-requir
 Other rules:
 
 - DeepSeek Harness uses its own settings: the relay shows its default model but gives it none, and refuses a model for it with `model-unsupported`. If the user wants another dsh model, they change it in DeepSeek Harness.
-- Gemini models run only through Antigravity (`agy`, the Antigravity CLI), never Gemini CLI. Give the slug `models agy` lists, such as `agy:gemini-4-argon-high`; a bare Gemini name like `gemini-4-argon` is refused with suggestions.
+- Gemini models run only through Antigravity (`agy`, the Antigravity CLI), never Gemini CLI. Give the slug `models agy` lists, such as `agy:gemini-4-argon-high`; a bare Gemini name like `gemini-4-argon` is refused with suggestions. For agy, or a codexhost Thread on its `antigravity` harness, `/boost` is read only as the first token: start the task (or a follow-up) with it, and the relay keeps it first in the prompt.
 - When the user names an executor, model or effort for one piece of work ("give this to Claude Opus"), pass `--executor`, `--model` and `--effort` on that dispatch only; they are checked the same way.
 - With codex-host installed, `codexhost/<harness>` runs a job on one of its harnesses (`codexhost/antigravity`, `codexhost/claude-code`; `codexhost harness list` lists them), as a Thread the user can open in Codex Desktop. Use it when the user names codexhost or a harness the relay has no executor for. Its model is codexhost's model ref and its effort is the harness's thinking option; leave both out for the harness's defaults. A codexhost review has no hard read-only sandbox: any change it makes is out of scope and cannot be applied.
 - `planner-mismatch` means the session belongs to another planner: start your own session instead of reusing someone else's id.
@@ -92,7 +92,7 @@ Pass the task on stdin (`--task-file -`) to avoid shell quoting. Never put secre
 
 ## 6. Review and integrate
 
-1. `result <id>`: summary, model, checks, changed files, out-of-scope files, patch stat and log paths. Read the patch (`logs.patch`) for anything that is not trivial.
+1. `result <id>`: summary, model, checks, changed files, out-of-scope files, patch stat and log paths. Read the patch (`logs.patch`) for anything that is not trivial. `result <id> --format text` gives the readable form; for a needs-input job it lists each question and its options.
 2. If it is right, `apply <id>`. The changes land unstaged in your working tree; review and commit them as your own. Out-of-scope changes need `--allow-out-of-scope`, and only after you have read them; a failed or cancelled job needs `--force`.
 3. Otherwise `discard <id>`, then improve the task or move it up a tier and dispatch again.
 4. `cancel <id>` stops a job you no longer need.
@@ -109,7 +109,7 @@ A job is a conversation with its executor's own session, in its own worktree. Pr
 - A job with `needsInput` (status `failed`, error `needs-input`, a codexhost harness that asked a question) is waiting, not broken: read the question in `result`, answer it yourself when the task already settles it, otherwise ask the user, and `send` the answer; it replaces the turn that asked. It keeps its scope meanwhile.
 - `takeover <id>`: when the user wants to work in the job themselves. Show them what it returns: the desktop app to open it in (`--open` opens it; Claude Code jobs open in the Claude desktop app, Codex jobs through a `codex://` link) and the terminal command with its folder. A running job needs `--stop`. While a job is taken over the relay sends it nothing, apply refuses it, and it keeps its scope.
 - `collect <id>`: once the user says they are done and closed that session, hand it back. Its checks run and its patch is collected again; then review and apply as usual. `branch-diverged` means the worktree left the job's branch: tell the user.
-- A message that mentions an executor with `#` (`#codex fix the flaky test`) asks you to hand that request to that executor through the relay instead of doing it yourself. It still needs a confirmed planner session: without one, start it and ask the user in one line whether to keep the saved roles. Only when `relay_agents` shows `mentionReuse: true` (`config set sessions.mentionReuse true`) does the mention itself count as keeping them; confirm with reuse and say so. In Claude Code the plugin offers these mentions as you type `#`, and `/relay jobs` lists the jobs waiting on you with Open, Review and Hand back.
+- A message that mentions an executor with `#` (`#codex fix the flaky test`, or a codex-host harness as `#codexhost/antigravity`) asks you to hand that request to that executor through the relay instead of doing it yourself; a bare `#codexhost` means `relay_agents`' `codexhost.defaultHarness`, and without one you ask the user which of `codexhost.harnesses` to use. It still needs a confirmed planner session: without one, start it and ask the user in one line whether to keep the saved roles. Only when `relay_agents` shows `mentionReuse: true` (`config set sessions.mentionReuse true`) does the mention itself count as keeping them; confirm with reuse and say so. In Claude Code the plugin offers these mentions as you type `#`, and `/relay jobs` lists the jobs waiting on you with Open, Review and Hand back.
 
 ## With Birdview
 

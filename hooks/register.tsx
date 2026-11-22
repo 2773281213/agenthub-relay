@@ -10,35 +10,59 @@
 //   a pane of the jobs waiting on you, with Open (take the job over in its
 //   executor's own app), Review and Hand back.
 // - In-app invocation: typing # offers the relay's executors (#codex, #claude,
-//   #dsh, #agy), and a prompt that mentions one gets a note, which only the
-//   model reads, to hand the request to that executor through the relay.
-// Nothing runs in an executor process (AGENTHUB_RELAY_ROLE=executor).
+//   #dsh, #agy, and #codexhost/<harness> for codex-host's harnesses), and a
+//   prompt that mentions one gets a note, which only the model reads, to hand
+//   the request to that executor through the relay.
+// Nothing runs in an executor process (AGENTHUB_RELAY_ROLE=executor), nor in
+// a codexhost harness running a relay job: in a codexhost Thread the mod
+// waits for the relay to say this session plans. A job whose planner the
+// relay wakes itself (in its codexhost Thread) is not woken here as well.
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { RelayKeepAlive, RelayPaneJob } from '../types'
 
-/** The executors a prompt can mention with #. */
+/** The executors a prompt can mention with #; codex-host's harnesses are #codexhost/<harness>. */
 export const MENTIONABLE = ['codex', 'claude', 'dsh', 'agy'] as const
+const CODEXHOST = 'codexhost'
 const PANE = 'relay-jobs'
 
 export type RelayExecutor = { id: string; label?: string; available?: boolean; tiers?: string[]; model?: string; agentDefault?: { model?: string } }
+/** What relay_agents says about codex-host: the harnesses a job can name, and the configured default. */
+export type RelayCodexhost = { harnesses: string[]; defaultHarness?: string }
 
-/** The executors a prompt mentions as #id, outside code spans and fences, in order, once each. */
+/**
+ * The executors a prompt mentions as #id, outside code spans and fences, in
+ * order, once each: codex, claude, dsh, agy, codexhost (its default harness)
+ * and codexhost/<harness>. A harness on another executor is no mention.
+ */
 export function mentionsIn(text: string): string[] {
   const prose = text.replace(/```[\s\S]*?(```|$)/g, ' ').replace(/`[^`\n]*`/g, ' ')
   const found: string[] = []
-  for (const match of prose.matchAll(/(?:^|[\s(（，,。.;；:：!！?？])#([a-z]+)(?![\w-])/gi)) {
-    const id = match[1].toLowerCase()
-    if ((MENTIONABLE as readonly string[]).includes(id) && !found.includes(id)) found.push(id)
+  for (const match of prose.matchAll(/(?:^|[\s(（，,。.;；:：!！?？])#([a-z]+)(?:\/([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*))?(?![\w-])/gi)) {
+    const base = match[1].toLowerCase()
+    const harness = match[2]
+    if (base === CODEXHOST) {
+      const id = harness ? `${CODEXHOST}/${harness}` : CODEXHOST
+      if (!found.includes(id)) found.push(id)
+      continue
+    }
+    if (harness) continue
+    if ((MENTIONABLE as readonly string[]).includes(base) && !found.includes(base)) found.push(base)
   }
   return found
 }
 
+function described(id: string): string {
+  if (id === CODEXHOST) return "#codexhost (a codex-host harness: the configured default one)"
+  if (id.startsWith(`${CODEXHOST}/`)) return `#${id} (codex-host's ${id.slice(CODEXHOST.length + 1)} harness)`
+  return `#${id} (the relay's ${id} executor)`
+}
+
 /** What the model reads beside a prompt that mentions executors (the user never sees it). */
 export function mentionContext(ids: string[], mentionReuse: boolean): string {
-  const named = ids.map(id => `#${id} (the relay's ${id} executor)`).join(', ')
+  const named = ids.map(described).join(', ')
   const session = mentionReuse
     ? 'If relay_session shows no confirmed planner session, the mention itself means keeping the saved roles: start one and confirm it with reuse: true, and tell the user you did.'
     : 'If relay_session shows no confirmed planner session, start one and ask the user in one line whether to keep the saved roles before confirming.'
@@ -46,20 +70,40 @@ export function mentionContext(ids: string[], mentionReuse: boolean): string {
     `[agenthub-relay] The user mentioned ${named}.`,
     `Hand this request to ${ids.length > 1 ? 'each mentioned executor' : 'that executor'} through agenthub-relay instead of doing it yourself:`,
     `write a self-contained task and call relay_dispatch with executor ${ids.map(id => `"${id}"`).join(' / ')}${ids.length > 1 ? ', one job per executor' : ''}, then end your turn or wait as the result says.`,
+    ...(ids.includes(CODEXHOST)
+      ? ['For #codexhost without a harness, relay_agents shows codexhost.defaultHarness; when there is none, ask the user which of codexhost.harnesses to use.']
+      : []),
     session,
   ].join(' ')
 }
 
-/** The typeahead rows for a token starting with #: the relay's executors that match it. */
-export function mentionRows(token: string, executors: RelayExecutor[]): { text: string; label: string; description: string }[] {
+/** The typeahead rows for a token starting with #: the relay's executors, and codex-host's harnesses, that match it. */
+export function mentionRows(token: string, executors: RelayExecutor[], codexhost?: RelayCodexhost): { text: string; label: string; description: string }[] {
   const typed = token.slice(1).toLowerCase()
   const known = new Map(executors.map(entry => [entry.id, entry]))
-  return MENTIONABLE.filter(id => id.startsWith(typed)).map(id => {
+  const rows = MENTIONABLE.filter(id => id.startsWith(typed)).map(id => {
     const entry = known.get(id)
     const model = entry?.model ?? entry?.agentDefault?.model
     const parts = [entry?.label ?? id, entry?.tiers?.length ? `tiers ${entry.tiers.join('/')}` : null, model ?? null, entry && entry.available === false ? 'not installed' : null]
     return { text: `#${id}`, label: `#${id}`, description: `agenthub-relay: ${parts.filter(Boolean).join(' · ')}` }
   })
+  if (!codexhost || codexhost.harnesses.length === 0) return rows
+  if (typed.length < CODEXHOST.length) {
+    // One row until "codexhost" is typed: the harness list is long.
+    if (CODEXHOST.startsWith(typed)) {
+      rows.push({ text: `#${CODEXHOST}/`, label: `#${CODEXHOST}/<harness>`, description: `agenthub-relay: a codex-host harness (${codexhost.harnesses.length})` })
+    }
+    return rows
+  }
+  if (!typed.startsWith(CODEXHOST)) return rows
+  if (codexhost.defaultHarness && CODEXHOST.startsWith(typed)) {
+    rows.push({ text: `#${CODEXHOST}`, label: `#${CODEXHOST}`, description: `agenthub-relay: codex-host, default harness ${codexhost.defaultHarness}` })
+  }
+  for (const harness of codexhost.harnesses) {
+    const id = `${CODEXHOST}/${harness}`
+    if (id.toLowerCase().startsWith(typed)) rows.push({ text: `#${id}`, label: `#${id}`, description: `agenthub-relay: codex-host's ${harness} harness` })
+  }
+  return rows
 }
 
 const MINUTE = 60_000
@@ -86,6 +130,8 @@ export type RelayJob = {
   model?: string
   /** The turn stopped on a question the executor asked (codexhost): answer it with relay_send. */
   needsInput?: boolean
+  /** The relay wakes this job's planner itself (in its codexhost Thread); the mod does not. */
+  wake?: { via?: string }
 }
 
 /** One turn of one job: a follow-up turn wakes the session again. */
@@ -156,7 +202,7 @@ const INITIAL: RelayKeepAlive = {
 // Change the tag when the fields change: an older stored value is then read as INITIAL.
 const keepAlive = atom({ plugin: 'agenthub-relay', key: 'keepAlive' } as const, INITIAL, { shape: 'keep-alive-2' })
 /** The jobs the pane draws, refreshed by the minute tick. */
-const paneJobs = atom({ plugin: 'agenthub-relay', key: 'jobs' } as const, [] as RelayPaneJob[], { shape: 'jobs-1' })
+const paneJobs = atom({ plugin: 'agenthub-relay', key: 'jobs' } as const, [] as RelayPaneJob[], { shape: 'jobs-2' })
 
 function paneJob(job: RelayJob): RelayPaneJob {
   return {
@@ -171,12 +217,14 @@ function paneJob(job: RelayJob): RelayPaneJob {
     turn: job.turn ?? 1,
     takenOver: job.takenOver === true,
     resumable: job.resumable === true,
+    needsInput: job.needsInput === true,
   }
 }
 
 function jobState(job: RelayPaneJob): string {
   const turn = job.turn > 1 ? `, turn ${job.turn}` : ''
   if (job.takenOver) return `taken over${turn}`
+  if (job.needsInput) return `needs input${turn}`
   if (LIVE.has(job.status)) return `${job.status}${turn}`
   return `${job.status}${job.verification ? `/${job.verification}` : ''}${turn}`
 }
@@ -222,8 +270,16 @@ type Runtime = {
   server: string | undefined
   lastJobs: RelayJob[]
   executors: RelayExecutor[]
+  codexhost: RelayCodexhost | undefined
   mentionReuse: boolean
   agentsAt: number | null
+  /**
+   * In a codexhost Thread (CODEXHOST_THREAD_ID or CODEX_THREAD_ID) this
+   * session may be a harness running a relay job, which the Host starts
+   * without AGENTHUB_RELAY_ROLE: the mod stays inactive until the relay says
+   * whether this session plans.
+   */
+  roleUnknown: boolean
 }
 
 async function connect($: EngineInterface, rt: Runtime): Promise<string | undefined> {
@@ -263,14 +319,33 @@ async function pollJobs($: EngineInterface, rt: Runtime): Promise<RelayJob[] | u
   return Array.isArray(jobs) ? (jobs as RelayJob[]) : undefined
 }
 
-/** The executors and the mention setting, for the # typeahead and the mention note. */
+function takeAgents(rt: Runtime, value: Record<string, unknown>, now: number): void {
+  if (Array.isArray(value.executors)) rt.executors = value.executors as RelayExecutor[]
+  const codexhost = value.codexhost as RelayCodexhost | undefined
+  rt.codexhost = codexhost && Array.isArray(codexhost.harnesses) ? codexhost : undefined
+  rt.mentionReuse = value.mentionReuse === true
+  rt.agentsAt = now
+}
+
+/**
+ * The executors and the mention setting, for the # typeahead and the mention
+ * note, every 10 minutes. A call that fails (the MCP server not connected
+ * yet) is tried again at the next tick, not 10 minutes later.
+ */
 async function refreshAgents($: EngineInterface, rt: Runtime, now: number): Promise<void> {
   if (rt.agentsAt !== null && now - rt.agentsAt < 10 * MINUTE) return
-  rt.agentsAt = now
   const called = await callRelay($, rt, 'relay_agents', {})
-  if (!called.ok) return
-  if (Array.isArray(called.value.executors)) rt.executors = called.value.executors as RelayExecutor[]
-  rt.mentionReuse = called.value.mentionReuse === true
+  if (called.ok) takeAgents(rt, called.value, now)
+}
+
+/** In a codexhost Thread: asks the relay whether this session plans, and wakes the mod only if it does. */
+async function checkRole($: EngineInterface, rt: Runtime): Promise<void> {
+  const called = await callRelay($, rt, 'relay_agents', {})
+  if (!called.ok) return // asked again at the next tick; inactive meanwhile
+  rt.roleUnknown = false
+  if (called.value.role === 'executor') return // a relay job's harness: stays inactive
+  rt.inactive = false
+  takeAgents(rt, called.value, await $.clock.now())
 }
 
 /** The pane's Open: take the job over and open it in its executor's own app; the terminal command goes to the clipboard. */
@@ -362,6 +437,15 @@ function showStatus($: EngineInterface, rt: Runtime, state: RelayKeepAlive, now:
 }
 
 async function tick($: EngineInterface, rt: Runtime): Promise<void> {
+  if (rt.ticking) return
+  if (rt.roleUnknown) {
+    rt.ticking = true
+    try {
+      await checkRole($, rt)
+    } finally {
+      rt.ticking = false
+    }
+  }
   if (rt.inactive || rt.ticking) return
   rt.ticking = true
   try {
@@ -380,14 +464,19 @@ async function tick($: EngineInterface, rt: Runtime): Promise<void> {
           !state.notified.includes(turnKey(job)) &&
           job.integration === 'none' &&
           job.takenOver !== true &&
-          job.resultFetched !== true,
+          job.resultFetched !== true &&
+          // A job the relay wakes its planner for itself (codexhost) is not woken twice.
+          job.wake === undefined,
       )
       if (live.some(id => !state.watched.includes(id))) {
         state = await update($, keepAlive, s => ({ ...s, watched: unique([...s.watched, ...live]) }))
       }
       if (ended.length > 0 && rt.wakeOnFinish && !rt.busy) {
-        state = await update($, keepAlive, s => ({ ...s, notified: unique([...s.notified, ...ended.map(turnKey)]) }))
+        // Recorded once the prompt is in: a submit that fails is tried again
+        // at the next tick instead of being lost. The tick does not overlap
+        // itself, so nothing is submitted twice meanwhile.
         await $.prompt.submit({ text: wakeText(ended) })
+        state = await update($, keepAlive, s => ({ ...s, notified: unique([...s.notified, ...ended.map(turnKey)]) }))
       }
     }
     const decision = decide({
@@ -412,7 +501,8 @@ async function tick($: EngineInterface, rt: Runtime): Promise<void> {
 }
 
 async function summary($: EngineInterface, rt: Runtime, arg: string): Promise<string> {
-  if (rt.inactive) return 'agenthub-relay: inactive, this process is an agenthub-relay executor'
+  if (rt.roleUnknown) return 'agenthub-relay: this session runs in a codexhost Thread and the relay has not answered yet whether it plans; the mod starts once it does'
+  if (rt.inactive) return 'agenthub-relay: inactive, this session runs a relay job (it is an executor)'
   if (arg === 'off') await update($, keepAlive, s => ({ ...s, paused: 'off' }))
   if (arg === 'on') await update($, keepAlive, s => ({ ...s, paused: null, retryAfter: null }))
   const now = await $.clock.now()
@@ -444,14 +534,23 @@ export const register: Register = (on, options) => {
     server: undefined,
     lastJobs: [],
     executors: [],
+    codexhost: undefined,
     mentionReuse: false,
     agentsAt: null,
+    roleUnknown: false,
   }
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     if ((await $.env.get('AGENTHUB_RELAY_ROLE')) === 'executor') return started
-    rt.inactive = false
+    // A codexhost harness gets no AGENTHUB_RELAY_ROLE: in a Thread, the first
+    // tick asks the relay, and the mod stays inactive until it answers.
+    const thread = (await $.env.get('CODEXHOST_THREAD_ID')) || (await $.env.get('CODEX_THREAD_ID'))
+    rt.roleUnknown = Boolean(thread)
+    rt.inactive = rt.roleUnknown
+    // A Host that keeps its Claude Code sessions warm itself would refresh this
+    // session too: keep_alive_in_codexhost off leaves that to the Host.
+    if (rt.roleUnknown && options.keep_alive_in_codexhost === false) rt.enabled = false
     await $.command.register({
       name: 'relay',
       description: 'agenthub-relay jobs and prompt-cache keep-alive; /relay jobs opens the jobs pane',
@@ -460,24 +559,30 @@ export const register: Register = (on, options) => {
     $.clock.every(MINUTE, () => {
       tick($, rt).catch(() => {})
     })
+    // In a Thread, ask at once rather than at the first minute's tick.
+    if (rt.roleUnknown) tick($, rt).catch(() => {})
     return started
   })
 
+  // What a session does is recorded while its role is still being asked, so
+  // a planner's first turn counts once it is known to be one.
+  const observing = () => !rt.inactive || rt.roleUnknown
+
   on('turn.start', async ($, e, next) => {
-    if (!rt.inactive && !rt.forking && e.agentId === undefined) rt.busy = true
+    if (observing() && !rt.forking && e.agentId === undefined) rt.busy = true
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
-    if (!rt.inactive && !rt.forking && e.agentId === undefined) rt.busy = false
+    if (observing() && !rt.forking && e.agentId === undefined) rt.busy = false
     return done
   })
 
   // Every model request of the main loop: its start is when the cache's
   // lifetime restarts. Subagents use their own, shorter-lived cache.
   on('turn.step', async function* ($, e, next) {
-    if (!rt.inactive && !rt.forking && e.agentId === undefined) {
+    if (observing() && !rt.forking && e.agentId === undefined) {
       const at = await $.clock.now()
       await update($, keepAlive, s => ({ ...s, lastRequestAt: at, retryAfter: null }))
     }
@@ -488,7 +593,7 @@ export const register: Register = (on, options) => {
   // told apart from a keep-alive that did not run. Observed, never vetoed.
   on('session.compact', async ($, e, next) => {
     const result = await next(e)
-    if (!rt.inactive && e.agentId === undefined) {
+    if (observing() && e.agentId === undefined) {
       const at = await $.clock.now()
       await update($, keepAlive, s => ({ ...s, compactions: [...s.compactions, { at, trigger: e.trigger }].slice(-20) }))
     }
@@ -497,6 +602,9 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'relay' }, async ($, e) => {
     const arg = e.args.trim()
+    // In a Thread whose role is not known yet, ask now instead of answering "inactive".
+    // A failed check leaves the role unknown: answer as inactive, do not throw.
+    if (rt.roleUnknown) await checkRole($, rt).catch(() => {})
     if (arg === 'jobs' && !rt.inactive) {
       await refreshPane($, rt)
       await $.ui.open({ id: PANE, title: 'Relay jobs' })
@@ -509,15 +617,20 @@ export const register: Register = (on, options) => {
   on('prompt.autocomplete', { token: /^#/ }, async ($, e, next) => {
     const engine = await next(e)
     if (rt.inactive) return engine
-    return { suggestions: [...engine.suggestions, ...mentionRows(e.token, rt.executors)] }
+    return { suggestions: [...engine.suggestions, ...mentionRows(e.token, rt.executors, rt.codexhost)] }
   })
 
   // ...and a prompt that mentions one tells the model to hand it over. The
   // text stays as typed; the note is context only the model reads.
   on('prompt.submit', async ($, e, next) => {
-    if (rt.inactive || e.command !== undefined || e.isMeta) return next(e)
+    if (e.command !== undefined || e.isMeta) return next(e)
     const ids = mentionsIn(e.text)
+    // Ordinary messages do not need the role: only a mention can carry a note
+    // that must not be dropped while a codexhost Thread's role is still unknown.
     if (ids.length === 0) return next(e)
+    // A failed check leaves the role unknown: pass the message through unchanged.
+    if (rt.roleUnknown) await checkRole($, rt).catch(() => {})
+    if (rt.inactive) return next(e)
     return next({ ...e, context: [...(e.context ?? []), mentionContext(ids, rt.mentionReuse)] })
   })
 
@@ -545,8 +658,17 @@ export const register: Register = (on, options) => {
                 <Button key={`back-${job.id}`} onPress={() => handBack($, rt, job)}>Hand back</Button>
               ) : (
                 !LIVE.has(job.status) && (
-                  <Button key={`review-${job.id}`} onPress={() => $.prompt.submit({ text: `Review relay job ${job.id} with relay_result, then apply it, send its session what to change with relay_send, or discard it.` })}>
-                    Review
+                  <Button
+                    key={`review-${job.id}`}
+                    onPress={() =>
+                      $.prompt.submit({
+                        text: job.needsInput
+                          ? `Relay job ${job.id} is waiting for an answer: read its question with relay_result, then answer it with relay_send (ask me first if the task does not settle it).`
+                          : `Review relay job ${job.id} with relay_result, then apply it, send its session what to change with relay_send, or discard it.`,
+                      })
+                    }
+                  >
+                    {job.needsInput ? 'Answer' : 'Review'}
                   </Button>
                 )
               )}

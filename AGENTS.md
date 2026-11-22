@@ -15,7 +15,8 @@ These rules apply to every agent working in this repository, whichever agent is 
 - Run every executor inside its own git worktree under `.agenthub/worktrees/`; the main working tree may change only through `relay_apply`.
 - Refuse a `light` tier job unless it declares an explicit file scope and at least one check command.
 - Refuse a write job whose scope overlaps the scope of an active write job, using directory-prefix matching (`src/api` covers `src/api/x.ts` but not `src/api-other.ts`).
-- Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`; in that role the hub must refuse dispatching and changing the relay settings, and the Claude Code mod must stay inactive.
+- Mark executor processes with `AGENTHUB_RELAY_ROLE=executor`; in that role the hub must refuse dispatching, sending to, taking over, collecting, applying, discarding and cancelling jobs, starting or confirming planner sessions and changing the relay settings, an executor's `relay_result` must not count as the planner's read, and the Claude Code mod must stay inactive.
+- Resolve a relay run from inside a job's worktree (`<owner>/.agenthub/worktrees/<id>`) to the repository that created the job (which may itself be a linked worktree), whose jobs it belongs to; any other linked worktree keeps its own relay.
 - Pass secrets only by environment variable name; never write API keys or environment values into job records, logs, events or test fixtures.
 - Dispatch only inside a planner session the user confirmed: refuse a dispatch without a confirmed session unless `sessions.required` is false, and refuse a caller identified as another agent than the session's planner.
 - Read other agents' own settings files (Codex `config.toml`, Claude Code `settings.json`, DeepSeek Harness `settings.yaml`) only to report their models; never write them.
@@ -27,8 +28,10 @@ These rules apply to every agent working in this repository, whichever agent is 
 - Start every child process with `windowsHide` on Windows: a worker has no console, and a child that gets a console of its own can be killed with it.
 - Drive the codexhost executor only through the documented `codexhost` CLI and its JSON fields (threadId, turnId, status, result, pendingQuestions); never edit codex-host's files or settings. Strip `CODEXHOST_RUNTIME_*` and the caller's Thread ids from its environment.
 - Treat two codexhost limits as known exceptions: the Host starts the harness, so a codexhost review has no hard read-only sandbox (its changes are all out of scope and cannot be applied), and `AGENTHUB_RELAY_ROLE` does not reach the harness, so a caller whose `CODEXHOST_THREAD_ID` or `CODEX_THREAD_ID` is the Thread of a running or needs-input codexhost job is refused as an executor.
-- Record a turn that stopped on an executor's question as `failed` with `error.code` `needs-input`; such a job keeps its scope, and an answer interrupts the waiting turn.
-- Tell a planner it will be woken only when something will wake it: the Claude Code mod, or a codexhost Thread the Host can read; any other planner waits with relay_wait.
+- Keep the Claude Code mod inactive in a codexhost Thread (`CODEXHOST_THREAD_ID` or `CODEX_THREAD_ID`) until `relay_agents` reports the session's role as planner: the claude-code harness loads the user's plugins.
+- Record a turn that stopped on an executor's question as `failed` with `error.code` `needs-input`; such a job keeps its scope, an answer interrupts the waiting turn, and discarding or applying it cancels that turn in the Host.
+- Start a codexhost job under the request id `agenthub-relay-<jobId>`, so a retried `delegate start` cannot start a second Thread; retry `thread cancel`, and record a turn that may still run in the Host as a warning.
+- Tell a planner it will be woken only when something will wake it: the Claude Code mod, or a codexhost Thread the Host can read; any other planner waits with relay_wait. The mod does not wake a job the relay wakes in its codexhost Thread, and the waker reconciles the jobs it waits on, since nothing else will while their planner waits.
 
 ## Verification rules
 

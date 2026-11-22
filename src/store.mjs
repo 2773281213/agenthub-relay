@@ -14,7 +14,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { renameWithRetry } from './platform.mjs';
+import { readFileWithRetry, renameWithRetry } from './platform.mjs';
 
 export const STATUSES = Object.freeze(['queued', 'running', 'verifying', 'completed', 'failed', 'cancelled']);
 export const TERMINAL = Object.freeze(new Set(['completed', 'failed', 'cancelled']));
@@ -99,7 +99,9 @@ export function writeJsonAtomic(file, value) {
 }
 
 function readJson(file) {
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
+  // Do not retry a JSON SyntaxError: an atomic rename never exposes half a
+  // record, so a damaged file would only delay the real error.
+  return JSON.parse(readFileWithRetry(file));
 }
 
 /**

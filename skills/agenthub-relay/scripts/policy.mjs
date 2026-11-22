@@ -3,6 +3,7 @@
 // executor role. Every decision here is a pure function of its inputs.
 
 import { HARNESS_NAME, MODEL_NAME, MODEL_NAME_RULE, RESERVED, splitHarness, TIERS, WRITE_TIERS } from './config.mjs';
+import { leadingCommand } from './executors.mjs';
 
 export const MAX_TASK_CHARS = 100_000;
 export const MAX_CHECKS = 20;
@@ -225,9 +226,16 @@ function cleanHarness(value) {
   return value;
 }
 
-function defaultTitle(task) {
-  const line = task.split('\n').find(text => text.trim() !== '') ?? task;
-  const title = line.trim();
+/**
+ * A title from the task's first line of text. A leading command the executor
+ * recognizes (agy's or codexhost/antigravity's /boost) is an instruction, not
+ * what the job is about: the title is taken from what follows it. A word the
+ * executor does not recognize stays part of the title.
+ */
+function defaultTitle(task, job) {
+  const text = leadingCommand(job, task).text;
+  const line = text.split('\n').find(entry => entry.trim() !== '') ?? task;
+  const title = line.trim() || task.trim();
   return title.length > MAX_TITLE_CHARS ? `${title.slice(0, MAX_TITLE_CHARS - 1)}…` : title;
 }
 
@@ -400,7 +408,7 @@ export function planDispatch({ request, config, jobs = [], role, session, caller
     ...(effort !== undefined ? { effort } : {}),
     scope: effectiveScope,
     checks,
-    title: cleanText(request.title, 'title', MAX_TITLE_CHARS) ?? defaultTitle(task),
+    title: cleanText(request.title, 'title', MAX_TITLE_CHARS) ?? defaultTitle(task, { executor, harness }),
     acceptance: cleanText(request.acceptance, 'acceptance', MAX_ACCEPTANCE_CHARS),
     timeoutMinutes,
   };
